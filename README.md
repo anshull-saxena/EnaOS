@@ -1,8 +1,14 @@
+<div align="center">
+  <img src="docs/assets/banner.png" alt="EnaOS Banner" width="100%">
+</div>
+
 # 🌌 EnaOS
 
 ### **The AI-Native Operating System for autonomous work.**
 
 EnaOS is a radical rethink of the desktop environment. Instead of a grid of isolated applications, EnaOS provides a unified, intent-driven interface that orchestrates AI agents, manages deep contextual memory, and executes complex workflows directly within the OS kernel.
+
+**[Join the Waitlist (Synthesis v1.0)](https://enaos.tech/coming-soon)**
 
 ---
 
@@ -85,7 +91,7 @@ EnaOS is currently in early developer preview. You can initialize the project st
 
 ```bash
 # Clone the monorepo
-git clone https://github.com/EnaOS/EnaOS.git && cd EnaOS
+git clone https://github.com/anshull-saxena/EnaOS.git && cd EnaOS
 
 # Install dependencies (Node.js 18+ required)
 cd apps/landing-page && npm install
