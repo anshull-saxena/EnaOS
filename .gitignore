@@ -1,0 +1,98 @@
+# OS Specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Dependencies & Build
+node_modules/
+dist/
+build/
+bin/
+out/
+target/
+.pnp
+.pnp.js
+
+# IDEs & Editors
+.vscode/
+.idea/
+.zed/
+.cursor/
+*.swp
+*.swo
+.project
+.settings/
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# Next.js & Web
+.next/
+.vercel
+.turbo/
+
+# Language Specific
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env/
+.pytest_cache/
+
+# Rust
+**/*.rs.bk
+target/
+
+# C/C++
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+*.app
+
+# Infrastructure & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+terraform.tfstate*
+.terraform/
+.ansible/
+.vault_pass
+
+# AI & Models (Do not commit large weights)
+*.bin
+*.gguf
+*.pt
+*.ckpt
+*.h5
+*.model
+*.onnx
+models/downloaded/
+
+# Project Specific
+.gemini/
+apps/landing-page/
+logs/
+*.log
+
+# Databases
+*.sqlite
+*.db
+memory-engine/vector-db/data/
