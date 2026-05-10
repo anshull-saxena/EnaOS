@@ -2,7 +2,7 @@
   <img src="docs/assets/banner.png" alt="EnaOS Banner" width="100%">
 </div>
 
-# 🌌 EnaOS
+# EnaOS
 
 ### **The AI-Native Operating System for autonomous work.**
 
@@ -12,7 +12,7 @@ EnaOS is a radical rethink of the desktop environment. Instead of a grid of isol
 
 ---
 
-## 📍 Progress Tracker
+## Progress Tracker
 
 - [x] **Monorepo Architecture:** Professional scaffold for a polyglot system.
 - [x] **Cinematic Landing Page:** Production-grade marketing presence.
@@ -25,7 +25,7 @@ EnaOS is a radical rethink of the desktop environment. Instead of a grid of isol
 
 ---
 
-## 🎯 Current Focus (Top 5)
+## Current Focus (Top 5)
 
 1.  **Native Ena Bar:** Transitioning the floating HUD into a high-performance desktop application.
 2.  **Kernel Orchestrator:** Building the Rust core that manages agent lifecycles and system IPC.
@@ -35,7 +35,7 @@ EnaOS is a radical rethink of the desktop environment. Instead of a grid of isol
 
 ---
 
-## 🛡 Why EnaOS?
+## Why EnaOS?
 
 Traditional operating systems were designed for a world where humans manually operate tools. In the age of AI, this model is the bottleneck.
 
@@ -47,7 +47,7 @@ Traditional operating systems were designed for a world where humans manually op
 
 ---
 
-## ⚡ What it does
+## What it does
 
 | Capability | Status | Outcome |
 | :--- | :--- | :--- |
@@ -59,7 +59,7 @@ Traditional operating systems were designed for a world where humans manually op
 
 ---
 
-## 🧠 Architecture Overview
+## Architecture Overview
 
 EnaOS is structured as a high-performance monorepo, utilizing Rust for system-level safety and Python for AI runtime orchestration.
 
@@ -84,7 +84,7 @@ The system operates on a "Baton-Passing" loop, where intent is parsed by the ker
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Path A: Building the Environment
 EnaOS is currently in early developer preview. You can initialize the project structure and marketing layer:
@@ -105,7 +105,7 @@ npm run dev
 
 ---
 
-## 🧩 Core Modules
+## Core Modules
 
 ### 📡 Ena Bar (`/ena-bar`)
 The centerpiece of the OS. A floating interaction layer that replaces the taskbar. It uses `framer-motion` for fluid HUD expansion and real-time audio visualization.
@@ -118,7 +118,7 @@ Handles the lifecycle of autonomous workers. It is designed to support multi-age
 
 ---
 
-## 🛠 Planned Use Cases
+## Planned Use Cases
 
 *   **Autonomous PR Management:** "Ena, review the latest issue on GitHub and draft a fix in the `/core` directory."
 *   **Deep Research Synthesis:** "Research advancements in solid-state batteries and prepare a technical brief."
@@ -126,7 +126,7 @@ Handles the lifecycle of autonomous workers. It is designed to support multi-age
 
 ---
 
-## ⚙️ Configuration & Extensibility
+##  Configuration & Extensibility
 
 ### Configuration
 EnaOS will be configurable via `config.yaml`.
@@ -139,7 +139,7 @@ Build your own agents using the Ena SDK.
 
 ---
 
-## 🛡 Security & Reliability
+## Security & Reliability
 
 *   **Sandboxed Execution:** `PENDING` — Autonomous actions are designed to run in isolated environments.
 *   **Human-in-the-Loop:** High-impact actions require manual approval via the Ena Bar.
@@ -147,7 +147,7 @@ Build your own agents using the Ena SDK.
 
 ---
 
-## 📚 Docs & Support
+## Docs & Support
 
 | Target | Resource |
 | :--- | :--- |
@@ -157,6 +157,6 @@ Build your own agents using the Ena SDK.
 
 ---
 
-## 📄 License
+## License
 
 EnaOS is released under the **MIT License**. Built by the community for the autonomous age.
