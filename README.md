@@ -18,7 +18,7 @@ EnaOS is a Linux-native shell and runtime that transforms the desktop into a con
 - [x] **Rust Daemon (enad):** Event bus, Unix socket IPC, process lifecycle
 - [x] **Desktop Integration:** Battery, network, window focus, workspace, audio, clipboard, notifications
 - [x] **System Awareness:** Real OS state streamed into the bar — no simulated UI
-- [ ] **AI Runtime:** Contextual inference layer with Ollama integration
+- [x] **AI Runtime:** Contextual inference layer with Ollama integration
 - [ ] **Agent Engine:** Multi-agent orchestration with baton-passing
 - [ ] **Memory Engine:** Vector-graph hybrid for persistent context
 - [ ] **Plugin SDK:** WASM-based agent extensions
@@ -36,27 +36,24 @@ EnaOS is a Linux-native shell and runtime that transforms the desktop into a con
 │  │          │ │           │ │          │ │ | Workspace 2  │ │
 │  │          │ │           │ │          │ │ | ⚡87%        │ │
 │  └──────────┘ └───────────┘ └──────────┘ └────────────────┘ │
-│                            │                                  │
-│               Unix Domain Socket (JSON lines)                 │
-└────────────────────────────┼──────────────────────────────────┘
-                             │
-┌────────────────────────────▼──────────────────────────────────┐
-│                      enad (Rust daemon)                       │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │                    Event Bus                              │ │
-│  │          (tokio broadcast — per-kind + catch-all)        │ │
-│  └───┬──────┬──────┬──────┬──────┬──────┬──────┬───────────┘ │
-│      │      │      │      │      │      │      │              │
-│  ┌───▼───┐┌▼─────┐┌▼─────┐┌▼────┐┌▼─────┐┌▼────┐┌▼────────┐ │
-│  │UPower │ │NetMgr│ │Window│ │Work-│ │Clip- │ │Notify│ │Audio   │ │
-│  │Battery│ │WiFi  │ │Focus │ │space│ │board │ │fdo   │ │+MPRIS  │ │
-│  └───────┘ └──────┘ └──────┘ └─────┘ └──────┘ └──────┘ └────────┘ │
-│      │         │        │       │       │        │        │       │
-│  ┌───▼─────────▼────────▼───────▼───────▼────────▼────────▼────┐ │
-│  │              D-Bus + External Tools Layer                    │ │
-│  │  zbus │ swaymsg │ hyprctl │ pactl │ wl-paste │ gdbus │ xprop│ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
+│         │                    │                                 │
+│    HTTP/SSE              Unix Socket                           │
+└─────────┼────────────────────┼─────────────────────────────────┘
+          │                    │
+┌─────────▼────────┐  ┌───────▼────────────────────────────────┐
+│  AI Runtime      │  │          enad (Rust daemon)            │
+│  (Python/FastAPI)│  │  ┌──────────────────────────────────┐  │
+│                  │  │  │          Event Bus                │  │
+│  ┌────────────┐  │  │  └───┬──────┬──────┬──────┬────────┘ │
+│  │ Ollama     │  │  │      │      │      │      │           │
+│  │ (streaming)│  │  │  ┌──▼───┐┌▼─────┐┌▼────┐┌▼────────┐ │
+│  └────────────┘  │  │  │UPower│ │NetMgr│ │Window│ │Audio   │ │
+│                  │  │  └──────┘ └──────┘ └──────┘ └────────┘ │
+│  ┌────────────┐  │  │      │         │        │        │      │
+│  │Context     │◄─┼──┘  ┌──▼─────────▼────────▼────────▼────┐ │
+│  │Injection   │  │     │     D-Bus + External Tools         │ │
+│  └────────────┘  │     │  zbus │ swaymsg │ pactl │ wl-paste │ │
+└──────────────────┘     └─────────────────────────────────────┘
 ```
 
 ---
@@ -124,7 +121,7 @@ EnaOS/
 | **Window Tracking** | swaymsg / hyprctl / gdbus | Multi-compositor support |
 | **Audio** | pactl + MPRIS D-Bus | Volume, device, media playback |
 | **Clipboard** | wl-clipboard / xclip | Content change monitoring |
-| **AI Runtime** | Python + Ollama (coming) | Local inference, streaming |
+| **AI Runtime** | Python + FastAPI + Ollama | Contextual inference, streaming |
 
 ---
 
@@ -134,8 +131,10 @@ EnaOS/
 
 - Linux with Wayland (GNOME, Sway, or Hyprland)
 - Rust 1.75+
+- Python 3.11+
 - GTK4 + libadwaita development libraries
 - D-Bus session and system buses
+- Ollama (for AI runtime)
 
 ### Build enad (System Daemon)
 
@@ -151,14 +150,45 @@ cd shell/ena-bar
 cargo build --release
 ```
 
+### Build AI Runtime (Python)
+
+```bash
+cd runtimes/ai-runtime
+pip install -r requirements.txt
+```
+
 ### Run
 
 ```bash
-# Start the daemon
+# 1. Start the daemon
 ./runtimes/enad/target/release/enad --socket /tmp/enad.sock
 
-# Start the bar (in another terminal)
+# 2. Start the AI runtime (requires Ollama running)
+cd runtimes/ai-runtime
+python3 -m src.main
+
+# 3. Start the bar (in another terminal)
 ./shell/ena-bar/target/release/ena-bar --socket-path /tmp/enad.sock
+```
+
+### Test the AI Runtime
+
+```bash
+# Check health
+curl http://localhost:8900/health
+
+# Get current desktop context
+curl http://localhost:8900/context
+
+# Chat (non-streaming)
+curl -X POST http://localhost:8900/chat \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What app am I working in?"}'
+
+# Chat (streaming)
+curl -X POST http://localhost:8900/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What app am I working in?"}'
 ```
 
 ### Desktop Integration Requirements
@@ -194,6 +224,19 @@ All communication between `ena-bar` and `enad` happens over a Unix domain socket
 - **Graceful degradation:** If a subsystem is unavailable, it logs and exits cleanly — enad never crashes.
 - **Compositor-agnostic:** Window tracking works on GNOME, Sway, and Hyprland with xprop fallback.
 - **Local-first:** Designed for local inference. Cloud is a fallback, not a requirement.
+
+---
+
+## Core Modules
+
+### 📡 Ena Bar (`/shell/ena-bar`)
+Native GTK4 layer-shell panel. Renderer-only — all state comes from enad. Displays focused app, workspace, battery, network, and media context.
+
+### ⚙️ enad (`/runtimes/enad`)
+Rust system daemon. Event bus, Unix socket IPC, desktop integration (UPower, NetworkManager, window tracking, clipboard, audio, notifications). The operating system event nucleus.
+
+### 🧠 AI Runtime (`/runtimes/ai-runtime`)
+Python contextual inference layer. Subscribes to enad events, maintains live desktop state snapshot, injects context into LLM prompts, streams responses via SSE. Local-first via Ollama.
 
 ---
 
