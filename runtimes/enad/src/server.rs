@@ -3,6 +3,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
+use crate::actions::executor::ActionExecutor;
+use crate::actions::types::{ActionRequest, ActionType};
 use crate::bus::EventBus;
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
@@ -10,14 +12,14 @@ use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget}
 pub struct IpcServer {
     listener: UnixListener,
     bus: Arc<EventBus>,
+    action_executor: Arc<ActionExecutor>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
 
 impl IpcServer {
     /// Bind to a Unix domain socket path.
-    pub fn bind(path: &str, bus: Arc<EventBus>) -> std::io::Result<Self> {
-        // Remove stale socket if present.
+    pub fn bind(path: &str, bus: Arc<EventBus>, action_executor: Arc<ActionExecutor>) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
         let listener = UnixListener::bind(path)?;
@@ -28,6 +30,7 @@ impl IpcServer {
         Ok(Self {
             listener,
             bus,
+            action_executor,
             shutdown_tx,
         })
     }
@@ -42,13 +45,13 @@ impl IpcServer {
                     match result {
                         Ok((stream, addr)) => {
                             let bus = self.bus.clone();
+                            let executor = self.action_executor.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
-                            // addr is () for Unix sockets, ignore
                             let _ = addr;
                         }
                         Err(e) => {
@@ -74,6 +77,7 @@ impl IpcServer {
 async fn handle_connection(
     mut stream: UnixStream,
     bus: Arc<EventBus>,
+    executor: Arc<ActionExecutor>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -82,16 +86,13 @@ async fn handle_connection(
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
-    // Subscribe to all events to push them to the client.
     let mut event_rx = bus.subscribe_all();
 
     loop {
         tokio::select! {
-            // Read a JSON line from the client.
             result = reader.read_line(&mut line) => {
                 match result {
                     Ok(0) => {
-                        // EOF — client disconnected.
                         info!("Client disconnected");
                         break;
                     }
@@ -104,7 +105,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus).await;
+                                let response = dispatch(msg, &bus, &executor).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -132,7 +133,6 @@ async fn handle_connection(
                     }
                 }
             }
-            // Push events from the bus to the client.
             result = event_rx.recv() => {
                 match result {
                     Ok(event) => {
@@ -163,17 +163,15 @@ async fn handle_connection(
 }
 
 /// Dispatch an IPC message and produce a response.
-async fn dispatch(msg: IpcMessage, bus: &EventBus) -> IpcMessage {
+async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus).await;
+            let response = handle_command(cmd, bus, executor).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
-            // Subscriptions are per-connection in handle_connection.
-            // Acknowledge receipt.
             IpcMessage::response(id, Response::Ok {
                 message: Some(format!("Subscribed to {} event kind(s)", sub.kinds.len())),
             })
@@ -198,18 +196,55 @@ async fn dispatch(msg: IpcMessage, bus: &EventBus) -> IpcMessage {
 }
 
 /// Handle an IPC command.
-async fn handle_command(cmd: Command, bus: &EventBus) -> Response {
+async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor) -> Response {
     match cmd {
         Command::Execute { command, args } => {
-            // Stub — will integrate with process manager.
             Response::Ok {
                 message: Some(format!("Executing: {} {:?}", command, args)),
+            }
+        }
+        Command::ExecuteAction { action, params } => {
+            // Parse the action type from the string + params.
+            let action_type = parse_action_type(&action, &params);
+
+            match action_type {
+                Ok(action_type) => {
+                    let permission = ActionRequest::default_permission(&action_type);
+                    let request = ActionRequest::new(action_type, permission);
+
+                    match executor.execute(request).await {
+                        Ok(action_id) => Response::Data {
+                            payload: serde_json::json!({
+                                "action_id": action_id,
+                                "status": "started",
+                            }),
+                        },
+                        Err(error) => Response::Error {
+                            code: "ACTION_FAILED".into(),
+                            message: error,
+                        },
+                    }
+                }
+                Err(error) => Response::Error {
+                    code: "INVALID_ACTION".into(),
+                    message: error,
+                },
+            }
+        }
+        Command::CancelAction { action_id } => {
+            match executor.cancel(action_id).await {
+                Ok(()) => Response::Ok {
+                    message: Some(format!("Action {action_id} cancelled")),
+                },
+                Err(error) => Response::Error {
+                    code: "CANCEL_FAILED".into(),
+                    message: error,
+                },
             }
         }
         Command::SpawnAgent { task, capabilities } => {
             let agent_id = uuid::Uuid::new_v4();
 
-            // Publish agent spawned event.
             bus.publish(crate::types::events::SystemEvent::new(
                 "enad",
                 crate::types::events::EventKind::Agent,
@@ -251,15 +286,11 @@ async fn handle_command(cmd: Command, bus: &EventBus) -> Response {
                     "agents": [],
                 }),
             },
-            StateTarget::ProcessList => {
-                // Query the process manager for tracked processes.
-                // We need access to ProcessManager here — for now return stub.
-                Response::Data {
-                    payload: serde_json::json!({
-                        "processes": [],
-                    }),
-                }
-            }
+            StateTarget::ProcessList => Response::Data {
+                payload: serde_json::json!({
+                    "processes": [],
+                }),
+            },
             StateTarget::DesktopContext => Response::Data {
                 payload: serde_json::json!({
                     "desktop_integration": true,
@@ -291,8 +322,49 @@ async fn handle_command(cmd: Command, bus: &EventBus) -> Response {
     }
 }
 
+/// Parse an action type from a string name and params JSON.
+fn parse_action_type(name: &str, params: &serde_json::Value) -> Result<ActionType, String> {
+    match name {
+        "open_app" => Ok(ActionType::OpenApp {
+            app: params.get("app").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "open_url" => Ok(ActionType::OpenUrl {
+            url: params.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "focus_window" => Ok(ActionType::FocusWindow {
+            app: params.get("app").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            title: params.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        }),
+        "launch_command" => Ok(ActionType::LaunchCommand {
+            command: params.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            args: params.get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default(),
+        }),
+        "switch_workspace" => Ok(ActionType::SwitchWorkspace {
+            workspace: params.get("workspace").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "search_files" => Ok(ActionType::SearchFiles {
+            query: params.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            path: params.get("path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        }),
+        "media_control" => Ok(ActionType::MediaControl {
+            action: params.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "clipboard_set" => Ok(ActionType::ClipboardSet {
+            text: params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "read_window_title" => Ok(ActionType::ReadWindowTitle),
+        "notify" => Ok(ActionType::Notify {
+            title: params.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            body: params.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        _ => Err(format!("Unknown action: {name}")),
+    }
+}
+
 fn hostname() -> String {
-    // Try Linux path first, then macOS-compatible fallback.
     std::fs::read_to_string("/etc/hostname")
         .or_else(|_| {
             std::process::Command::new("hostname")

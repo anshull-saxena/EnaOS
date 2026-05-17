@@ -38,6 +38,15 @@ pub enum Command {
         command: String,
         args: Vec<String>,
     },
+    /// Execute a desktop action (open app, focus window, etc.)
+    ExecuteAction {
+        action: String,
+        params: serde_json::Value,
+    },
+    /// Cancel a running action.
+    CancelAction {
+        action_id: Uuid,
+    },
     /// Spawn an agent with a task description
     SpawnAgent {
         task: String,

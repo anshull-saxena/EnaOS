@@ -150,6 +150,28 @@ pub enum EventPayload {
         id: u32,
     },
 
+    // ── Action execution events ──
+    ActionRequested {
+        action_id: Uuid,
+        action_type: String,
+        message: String,
+    },
+    ActionStarted {
+        action_id: Uuid,
+        message: String,
+    },
+    ActionCompleted {
+        action_id: Uuid,
+        result: String,
+    },
+    ActionFailed {
+        action_id: Uuid,
+        error: String,
+    },
+    ActionCancelled {
+        action_id: Uuid,
+    },
+
     // ── Debug ──
     Log {
         level: String,

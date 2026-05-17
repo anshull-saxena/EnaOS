@@ -106,3 +106,12 @@ drawingarea {
     font-weight: 400;
     letter-spacing: 0.3px;
 }
+
+/* ── Action execution label ──────────────────────────────────── */
+.ena-action {
+    color: rgba(255, 255, 255, 0.6);
+    font-family: "Inter", "SF Pro", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}

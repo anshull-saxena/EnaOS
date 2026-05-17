@@ -121,3 +121,37 @@ class EnadBridge:
             print(f"[enad-bridge] query error: {e}")
 
         return None
+
+    async def execute_action(self, action: str, params: dict) -> dict | None:
+        """Send an ExecuteAction command to enad."""
+        try:
+            reader, writer = await asyncio.open_unix_connection(self._socket_path)
+
+            cmd = {
+                "id": "00000000-0000-0000-0000-000000000002",
+                "type": "Command",
+                "body": {
+                    "type": "ExecuteAction",
+                    "action": action,
+                    "params": params,
+                },
+            }
+            writer.write((json.dumps(cmd) + "\n").encode())
+            await writer.drain()
+
+            line = await reader.readline()
+            writer.close()
+            await writer.wait_closed()
+
+            if line:
+                resp = json.loads(line.decode().strip())
+                body = resp.get("body", {})
+                if body.get("type") == "Data":
+                    return body.get("payload")
+                elif body.get("type") == "Error":
+                    return {"error": body.get("message", "Unknown error")}
+
+        except Exception as e:
+            print(f"[enad-bridge] action error: {e}")
+
+        return None

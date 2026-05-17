@@ -2,12 +2,10 @@
 title: "I'm Building an AI-Native Desktop OS in Rust + GTK4 — and I Need Your Help"
 description: "EnaOS is an open-source, Linux-native AI operating environment. No Electron, no browser wrappers — real Rust daemons, GTK4 widgets, and Wayland layer-shell surfaces. I've built the foundation. Now I need contributors to finish the vision."
 published: false
-tags: [rust, gtk4, opensource, linux, wayland, ai, desktop]
+tags: [rust, gtk4, opensource, linux]
 canonical_url: https://enaos.tech
 cover_image: https://enaos.tech/banner.png
 ---
-
-![EnaOS Banner](https://enaos.tech/banner.png)
 
 *This is not another Electron app that calls itself a desktop OS.*
 *This is real: Rust daemons, GTK4 widgets, Wayland layer-shell protocols, and a Unix socket IPC bus connecting them.*

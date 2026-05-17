@@ -1,3 +1,4 @@
+mod actions;
 mod bus;
 mod hooks;
 mod process;
@@ -43,10 +44,11 @@ async fn main() -> anyhow::Result<()> {
     // ── Core subsystems ──
     let bus = Arc::new(bus::EventBus::default());
     let process_manager = Arc::new(process::ProcessManager::new(bus.clone()));
+    let action_executor = Arc::new(actions::executor::ActionExecutor::new(bus.clone()));
     let system_hooks = hooks::SystemHooks::new(bus.clone());
 
     // ── IPC server ──
-    let server = server::IpcServer::bind(&cli.socket, bus.clone())?;
+    let server = server::IpcServer::bind(&cli.socket, bus.clone(), action_executor.clone())?;
     let shutdown_handle = server.shutdown_handle();
 
     // ── Spawn subsystems ──

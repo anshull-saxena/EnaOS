@@ -54,6 +54,10 @@ pub struct EnaBar {
     context_label: gtk4::Label,
     context_revealer: gtk4::Revealer,
 
+    // Action execution display.
+    action_label: gtk4::Label,
+    action_revealer: gtk4::Revealer,
+
     // Internal context tracker.
     context: std::sync::Mutex<SystemContext>,
 }
@@ -159,6 +163,22 @@ impl EnaBar {
             .child(&context_label)
             .build();
 
+        // ── Action execution label ──────────────────────────────
+        let action_label = gtk4::Label::builder()
+            .label("")
+            .xalign(0.5)
+            .margin_start(8)
+            .margin_end(8)
+            .margin_bottom(2)
+            .build();
+        action_label.add_css_class("ena-action");
+
+        let action_revealer = gtk4::Revealer::builder()
+            .transition_type(gtk4::RevealerTransitionType::SlideDown)
+            .transition_duration(200)
+            .child(&action_label)
+            .build();
+
         // ── Main bar row ────────────────────────────────────────
         let bar_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -184,6 +204,7 @@ impl EnaBar {
         container.append(&bar_row);
         container.append(&status_revealer);
         container.append(&context_revealer);
+        container.append(&action_revealer);
 
         let bar = Arc::new(EnaBar {
             container,
@@ -198,6 +219,8 @@ impl EnaBar {
             status_revealer,
             context_label,
             context_revealer,
+            action_label,
+            action_revealer,
             context: std::sync::Mutex::new(SystemContext::default()),
         });
 
@@ -381,6 +404,9 @@ impl EnaBar {
                     }
                     _ => {}
                 }
+
+                // Handle action lifecycle events.
+                self.handle_action_event(&kind, &payload);
             }
             EnadEvent::Raw(raw) => {
                 tracing::warn!("Unparsed IPC message: {raw}");
@@ -458,6 +484,68 @@ impl EnaBar {
 
         drop(ctx);
         self.update_context();
+    }
+
+    /// Handle action lifecycle events and display execution state.
+    fn handle_action_event(&self, kind: &str, payload: &Value) {
+        if kind != "System" {
+            return;
+        }
+
+        let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let data = payload.get("data").cloned().unwrap_or(Value::Null);
+
+        match event_type {
+            "ActionStarted" => {
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Executing action...");
+                self.action_label.set_label(message);
+                self.action_revealer.set_reveal_child(true);
+                self.update_status_dot(0.85, 0.7, 0.2);
+            }
+            "ActionCompleted" => {
+                let result = data
+                    .get("result")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Action completed");
+                self.action_label.set_label(&format!("\u{2713} {result}"));
+                self.update_status_dot(0.2, 0.8, 0.3);
+
+                // Auto-hide after 3 seconds.
+                let action_rev = self.action_revealer.clone();
+                glib::timeout_add_seconds_local(3, move || {
+                    action_rev.set_reveal_child(false);
+                    glib::ControlFlow::Break
+                });
+            }
+            "ActionFailed" => {
+                let error = data
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Action failed");
+                self.action_label.set_label(&format!("\u{2717} {error}"));
+                self.update_status_dot(0.8, 0.3, 0.3);
+
+                let action_rev = self.action_revealer.clone();
+                glib::timeout_add_seconds_local(5, move || {
+                    action_rev.set_reveal_child(false);
+                    glib::ControlFlow::Break
+                });
+            }
+            "ActionCancelled" => {
+                self.action_label.set_label("Action cancelled");
+                self.update_status_dot(0.5, 0.5, 0.5);
+
+                let action_rev = self.action_revealer.clone();
+                glib::timeout_add_seconds_local(2, move || {
+                    action_rev.set_reveal_child(false);
+                    glib::ControlFlow::Break
+                });
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn update_status_dot(&self, r: f64, g: f64, b: f64) {

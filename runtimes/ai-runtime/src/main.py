@@ -13,6 +13,7 @@ import signal
 
 import uvicorn
 
+from src.api import server
 from src.api.server import app, desktop_state
 from src.bridge.enad import EnadBridge
 from src.config import settings
@@ -33,6 +34,7 @@ async def main() -> None:
     # Start enad bridge in background.
     bridge = EnadBridge()
     bridge.on_event(on_enad_event)
+    server.bridge = bridge  # Wire bridge into API server.
 
     bridge_task = asyncio.create_task(bridge.start())
 
@@ -49,16 +51,16 @@ async def main() -> None:
         port=settings.port,
         log_level="info",
     )
-    server = uvicorn.Server(config)
+    server_obj = uvicorn.Server(config)
 
     # Handle shutdown.
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, server.should_exit = True)
+        loop.add_signal_handler(sig, setattr(server_obj, "should_exit", True))
 
     # Run server and bridge concurrently.
     await asyncio.gather(
-        server.serve(),
+        server_obj.serve(),
         bridge_task,
     )
 
