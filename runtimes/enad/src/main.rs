@@ -1,6 +1,7 @@
 mod actions;
 mod bus;
 mod hooks;
+mod memory;
 mod process;
 mod server;
 mod types;
@@ -47,8 +48,22 @@ async fn main() -> anyhow::Result<()> {
     let action_executor = Arc::new(actions::executor::ActionExecutor::new(bus.clone()));
     let system_hooks = hooks::SystemHooks::new(bus.clone());
 
+    // ── Memory subsystem ──
+    let memory_path = format!("{}/ena-memory.db", std::env::temp_dir().display());
+    let memory_store = match memory::store::MemoryStore::open(&memory_path) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            tracing::warn!("Memory store failed to open: {e} — memory disabled");
+            Arc::new(memory::store::MemoryStore::open("/tmp/ena-memory.db").unwrap_or_else(|_| {
+                // Fallback: in-memory-like behavior with a tmp file.
+                panic!("Cannot initialize memory store: {e}");
+            }))
+        }
+    };
+    let memory_capture = memory::capture::MemoryCapture::new(memory_store.clone());
+
     // ── IPC server ──
-    let server = server::IpcServer::bind(&cli.socket, bus.clone(), action_executor.clone())?;
+    let server = server::IpcServer::bind(&cli.socket, bus.clone(), action_executor.clone(), memory_store.clone())?;
     let shutdown_handle = server.shutdown_handle();
 
     // ── Spawn subsystems ──
@@ -146,6 +161,15 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(not(target_os = "linux"))]
     let desktop_handles: Option<Vec<tokio::task::JoinHandle<()>>> = None;
 
+    // ── Memory capture ──
+    let memory_capture_handle = {
+        let mc = memory_capture;
+        let b = bus.clone();
+        tokio::spawn(async move {
+            mc.run(b).await;
+        })
+    };
+
     // ── Install system hooks ──
     let hooks_shutdown = system_hooks.wait_for_shutdown();
 
@@ -171,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let _ = server_handle.await;
         let _ = process_reaper.await;
+        memory_capture_handle.abort();
 
         // Abort desktop integration tasks.
         if let Some(handles) = desktop_handles {

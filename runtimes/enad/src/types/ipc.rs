@@ -73,6 +73,12 @@ pub enum StateTarget {
     ProcessList,
     /// Full desktop context (battery, network, audio, focused window, workspace).
     DesktopContext,
+    /// Recent memory entries.
+    MemoryRecent,
+    /// Memory summary.
+    MemorySummary,
+    /// Memory search.
+    MemorySearch { query: String },
 }
 
 /// Responses from enad back to the Ena Bar.

@@ -122,6 +122,45 @@ class EnadBridge:
 
         return None
 
+    async def query_memory(self, query_type: str, **kwargs) -> dict | None:
+        """Query enad memory.
+
+        query_type: "MemoryRecent", "MemorySummary", or "MemorySearch"
+        """
+        try:
+            reader, writer = await asyncio.open_unix_connection(self._socket_path)
+
+            if query_type == "MemorySearch":
+                target = {
+                    "type": "MemorySearch",
+                    "query": kwargs.get("query", ""),
+                }
+            else:
+                target = query_type
+
+            query = {
+                "id": "00000000-0000-0000-0000-000000000003",
+                "type": "Command",
+                "body": {"type": "QueryState", "target": target},
+            }
+            writer.write((json.dumps(query) + "\n").encode())
+            await writer.drain()
+
+            line = await reader.readline()
+            writer.close()
+            await writer.wait_closed()
+
+            if line:
+                resp = json.loads(line.decode().strip())
+                body = resp.get("body", {})
+                if body.get("type") == "Data":
+                    return body.get("payload")
+
+        except Exception as e:
+            print(f"[enad-bridge] memory query error: {e}")
+
+        return None
+
     async def execute_action(self, action: str, params: dict) -> dict | None:
         """Send an ExecuteAction command to enad."""
         try:

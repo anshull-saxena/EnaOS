@@ -6,6 +6,8 @@ use tracing::{error, info, warn};
 use crate::actions::executor::ActionExecutor;
 use crate::actions::types::{ActionRequest, ActionType};
 use crate::bus::EventBus;
+use crate::memory::store::MemoryStore;
+use crate::memory::types::MemoryQuery;
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -13,13 +15,14 @@ pub struct IpcServer {
     listener: UnixListener,
     bus: Arc<EventBus>,
     action_executor: Arc<ActionExecutor>,
+    memory_store: Arc<MemoryStore>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
 
 impl IpcServer {
     /// Bind to a Unix domain socket path.
-    pub fn bind(path: &str, bus: Arc<EventBus>, action_executor: Arc<ActionExecutor>) -> std::io::Result<Self> {
+    pub fn bind(path: &str, bus: Arc<EventBus>, action_executor: Arc<ActionExecutor>, memory_store: Arc<MemoryStore>) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
         let listener = UnixListener::bind(path)?;
@@ -31,6 +34,7 @@ impl IpcServer {
             listener,
             bus,
             action_executor,
+            memory_store,
             shutdown_tx,
         })
     }
@@ -46,9 +50,10 @@ impl IpcServer {
                         Ok((stream, addr)) => {
                             let bus = self.bus.clone();
                             let executor = self.action_executor.clone();
+                            let memory = self.memory_store.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, executor, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, memory, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
@@ -78,6 +83,7 @@ async fn handle_connection(
     mut stream: UnixStream,
     bus: Arc<EventBus>,
     executor: Arc<ActionExecutor>,
+    memory: Arc<MemoryStore>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -105,7 +111,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus, &executor).await;
+                                let response = dispatch(msg, &bus, &executor, &memory).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -163,12 +169,12 @@ async fn handle_connection(
 }
 
 /// Dispatch an IPC message and produce a response.
-async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor) -> IpcMessage {
+async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor, memory: &MemoryStore) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor).await;
+            let response = handle_command(cmd, bus, executor, memory).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
@@ -196,7 +202,7 @@ async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor) ->
 }
 
 /// Handle an IPC command.
-async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor) -> Response {
+async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor, memory: &MemoryStore) -> Response {
     match cmd {
         Command::Execute { command, args } => {
             Response::Ok {
@@ -306,6 +312,42 @@ async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor)
                     ],
                 }),
             },
+            StateTarget::MemoryRecent => {
+                let mut q = MemoryQuery::new();
+                q.limit = 20;
+                match memory.query(&q) {
+                    Ok(entries) => Response::Data {
+                        payload: serde_json::to_value(&entries).unwrap_or(serde_json::json!([])),
+                    },
+                    Err(e) => Response::Error {
+                        code: "MEMORY_QUERY".into(),
+                        message: e,
+                    },
+                }
+            }
+            StateTarget::MemorySummary => {
+                match memory.summary() {
+                    Ok(summary) => Response::Data {
+                        payload: serde_json::to_value(&summary).unwrap_or(serde_json::json!({})),
+                    },
+                    Err(e) => Response::Error {
+                        code: "MEMORY_SUMMARY".into(),
+                        message: e,
+                    },
+                }
+            }
+            StateTarget::MemorySearch { query } => {
+                let q = MemoryQuery::search(&query);
+                match memory.query(&q) {
+                    Ok(entries) => Response::Data {
+                        payload: serde_json::to_value(&entries).unwrap_or(serde_json::json!([])),
+                    },
+                    Err(e) => Response::Error {
+                        code: "MEMORY_SEARCH".into(),
+                        message: e,
+                    },
+                }
+            }
         },
         Command::Terminate { id } => Response::Ok {
             message: Some(format!("Terminate request for {id} (not yet implemented)")),

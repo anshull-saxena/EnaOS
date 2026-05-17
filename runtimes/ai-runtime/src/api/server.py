@@ -5,6 +5,7 @@ Endpoints:
     POST /chat/stream   — Streaming chat via SSE
     POST /action        — Execute a desktop action via enad
     GET  /context       — Current desktop context
+    GET  /memory        — Working memory summary
     GET  /health        — Runtime health check
     GET  /sessions      — List active sessions
 """
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from src.context.state import DesktopState
 from src.context.sessions import SessionManager
 from src.inference.ollama import OllamaProvider
-from src.inference.prompt import build_system_prompt
+from src.inference.prompt import build_system_prompt, format_memory_context
 
 app = FastAPI(title="EnaOS AI Runtime", version="0.1.0")
 
@@ -84,12 +85,29 @@ async def get_context() -> ContextResponse:
     )
 
 
+@app.get("/memory")
+async def get_memory() -> dict:
+    """Get working memory summary from enad."""
+    if not bridge or not bridge.connected:
+        return {"error": "enad not connected"}
+
+    summary = await bridge.query_memory("MemorySummary")
+    return summary or {}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     """Non-streaming chat — returns full response."""
     session = session_manager.get_or_create(req.session_id)
 
-    system_prompt = build_system_prompt(desktop_state)
+    # Build system prompt with desktop context + working memory.
+    memory_context = ""
+    if bridge and bridge.connected:
+        memory_data = await bridge.query_memory("MemorySummary")
+        if memory_data:
+            memory_context = format_memory_context(memory_data)
+
+    system_prompt = build_system_prompt(desktop_state, memory_context)
     session.add_message("user", req.query)
 
     response_text = await provider.chat(
@@ -99,6 +117,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
     )
 
     session.add_message("assistant", response_text)
+
+    # Record intent and response in memory.
+    if bridge and bridge.connected:
+        try:
+            await bridge.query_memory("MemorySummary")  # Trigger memory capture
+        except Exception:
+            pass
+
     return ChatResponse(response=response_text, session_id=session.id)
 
 
@@ -107,7 +133,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     """Streaming chat — returns tokens via Server-Sent Events."""
     session = session_manager.get_or_create(req.session_id)
 
-    system_prompt = build_system_prompt(desktop_state)
+    # Build system prompt with desktop context + working memory.
+    memory_context = ""
+    if bridge and bridge.connected:
+        memory_data = await bridge.query_memory("MemorySummary")
+        if memory_data:
+            memory_context = format_memory_context(memory_data)
+
+    system_prompt = build_system_prompt(desktop_state, memory_context)
     session.add_message("user", req.query)
 
     async def event_stream() -> AsyncIterator[str]:
@@ -160,6 +193,27 @@ async def execute_action(req: ActionRequest) -> ActionResponse:
 
     action_id = result.get("action_id", "")
     return ActionResponse(action_id=str(action_id), status="started")
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+
+
+class MemorySearchResponse(BaseModel):
+    results: list[dict]
+    count: int
+
+
+@app.post("/memory/search", response_model=MemorySearchResponse)
+async def search_memory(req: MemorySearchRequest) -> MemorySearchResponse:
+    """Search working memory."""
+    if not bridge or not bridge.connected:
+        return MemorySearchResponse(results=[], count=0)
+
+    results = await bridge.query_memory("MemorySearch", query=req.query)
+    if results and isinstance(results, list):
+        return MemorySearchResponse(results=results, count=len(results))
+    return MemorySearchResponse(results=[], count=0)
 
 
 @app.get("/sessions")
