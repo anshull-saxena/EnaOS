@@ -4,159 +4,199 @@
 
 # EnaOS
 
-### **The AI-Native Operating System for autonomous work.**
+### **The AI-Native Desktop Operating Environment.**
 
-EnaOS is a radical rethink of the desktop environment. Instead of a grid of isolated applications, EnaOS provides a unified, intent-driven interface that orchestrates AI agents, manages deep contextual memory, and executes complex workflows directly within the OS kernel.
+EnaOS is a Linux-native shell and runtime that transforms the desktop into a contextually-aware AI interaction layer. No browser. No Electron. No Tauri. Built with Rust, GTK4, and libadwaita — running as a native Wayland layer-shell overlay driven by a Rust daemon.
 
-**[Join the Waitlist (Synthesis v1.0)](https://enaos.tech/coming-soon)**
-
----
-
-## Progress Tracker
-
-- [x] **Monorepo Architecture:** Professional scaffold for a polyglot system.
-- [x] **Cinematic Landing Page:** Production-grade marketing presence.
-- [x] **Waitlist Engine:** Automated synthesis registration via Supabase.
-- [x] **Design System:** "Obsidian & Glass" theme defined.
-- [ ] **Ena Bar (Desktop):** Porting the HUD from web to a native system layer.
-- [ ] **Core Orchestrator:** Rust-based daemon for system-level task management.
-- [ ] **Vector Memory Engine:** Persistent contextual storage for user intent.
-- [ ] **Local Inference Bridge:** Stable Ollama/Llama.cpp system integration.
+**[Join the Waitlist](https://enaos.tech/coming-soon)**
 
 ---
 
-## Current Focus (Top 5)
+## Milestones
 
-1.  **Native Ena Bar:** Transitioning the floating HUD into a high-performance desktop application.
-2.  **Kernel Orchestrator:** Building the Rust core that manages agent lifecycles and system IPC.
-3.  **Context Synthesis:** Finalizing the schema for how short-term intent becomes long-term memory.
-4.  **Agent Handoffs:** Refining the "Baton-Passing" protocol for multi-agent task execution.
-5.  **Local LLM Optimization:** Tuning local models for zero-latency desktop interaction.
-
----
-
-## Why EnaOS?
-
-Traditional operating systems were designed for a world where humans manually operate tools. In the age of AI, this model is the bottleneck.
-
-> "Computing hasn't changed fundamentally in 40 years. We still open files, switch between apps, and manually move data. EnaOS is built for a future where your computer doesn't just store data—it understands your intent."
-
-*   **App-Agnostic:** Stop opening tools. Start achieving goals.
-*   **Local-First:** Privacy-centric intelligence powered by local inference.
-*   **Context-Aware:** A system that remembers the "why" behind every task.
+- [x] **Native GTK4 Ena Bar:** Layer-shell Wayland overlay with real-time rendering
+- [x] **Rust Daemon (enad):** Event bus, Unix socket IPC, process lifecycle
+- [x] **Desktop Integration:** Battery, network, window focus, workspace, audio, clipboard, notifications
+- [x] **System Awareness:** Real OS state streamed into the bar — no simulated UI
+- [ ] **AI Runtime:** Contextual inference layer with Ollama integration
+- [ ] **Agent Engine:** Multi-agent orchestration with baton-passing
+- [ ] **Memory Engine:** Vector-graph hybrid for persistent context
+- [ ] **Plugin SDK:** WASM-based agent extensions
 
 ---
 
-## What it does
+## Architecture
 
-| Capability | Status | Outcome |
-| :--- | :--- | :--- |
-| **The Ena Bar** | `IN-DEVELOPMENT` | A floating, omnipresent HUD for voice, text, and multimodal intent. |
-| **Agentic Kernel** | `PROTOTYPING` | Native orchestration for Research, Coding, and Analysis agents. |
-| **Contextual Memory** | `PENDING` | A system-wide vector store that links past interactions to current tasks. |
-| **Execution Trace** | `IN-DEVELOPMENT` | Complete visibility into AI reasoning and autonomous actions. |
-| **Local Inference** | `STABLE` | First-class support for Llama 3 and DeepSeek via Ollama integration. |
-
----
-
-## Architecture Overview
-
-EnaOS is structured as a high-performance monorepo, utilizing Rust for system-level safety and Python for AI runtime orchestration.
-
-```text
-       [ USER INTENT ]
-              │
-      ┌───────▼───────┐
-      │   ENA BAR     │ (Global HUD / Shell UI)
-      └───────┬───────┘
-              │
-    ┌─────────┴─────────┐
-    │  CORE ORCHESTRATOR│ (Rust-based System Daemon - PENDING)
-    └─────────┬─────────┘
-      ┌───────┼───────┐
-┌─────▼────┐┌─▼───────┐┌─────▼────┐
-│AI RUNTIME││ MEMORY  ││  SHELL   │
-│(Local/API)││(Vector) ││ (Wayland)│
-└──────────┘└─────────┘└──────────┘
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Ena Bar (GTK4/libadwaita)                 │
+│  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌────────────────┐ │
+│  │StatusDot │ │InputEntry │ │MicButton │ │ ContextLabel   │ │
+│  │          │ │           │ │          │ │ Focused: VSCode│ │
+│  │          │ │           │ │          │ │ | Workspace 2  │ │
+│  │          │ │           │ │          │ │ | ⚡87%        │ │
+│  └──────────┘ └───────────┘ └──────────┘ └────────────────┘ │
+│                            │                                  │
+│               Unix Domain Socket (JSON lines)                 │
+└────────────────────────────┼──────────────────────────────────┘
+                             │
+┌────────────────────────────▼──────────────────────────────────┐
+│                      enad (Rust daemon)                       │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │                    Event Bus                              │ │
+│  │          (tokio broadcast — per-kind + catch-all)        │ │
+│  └───┬──────┬──────┬──────┬──────┬──────┬──────┬───────────┘ │
+│      │      │      │      │      │      │      │              │
+│  ┌───▼───┐┌▼─────┐┌▼─────┐┌▼────┐┌▼─────┐┌▼────┐┌▼────────┐ │
+│  │UPower │ │NetMgr│ │Window│ │Work-│ │Clip- │ │Notify│ │Audio   │ │
+│  │Battery│ │WiFi  │ │Focus │ │space│ │board │ │fdo   │ │+MPRIS  │ │
+│  └───────┘ └──────┘ └──────┘ └─────┘ └──────┘ └──────┘ └────────┘ │
+│      │         │        │       │       │        │        │       │
+│  ┌───▼─────────▼────────▼───────▼───────▼────────▼────────▼────┐ │
+│  │              D-Bus + External Tools Layer                    │ │
+│  │  zbus │ swaymsg │ hyprctl │ pactl │ wl-paste │ gdbus │ xprop│ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-The system operates on a "Baton-Passing" loop, where intent is parsed by the kernel, assigned to specific agents, and executed within a secure sandbox while maintaining a live execution trace for the user.
+---
+
+## Project Structure
+
+```
+EnaOS/
+├── runtimes/
+│   ├── enad/              # Rust system daemon (core)
+│   │   ├── src/
+│   │   │   ├── main.rs    # Entry point, subsystem orchestration
+│   │   │   ├── bus.rs     # Event bus (tokio broadcast)
+│   │   │   ├── server.rs  # Unix socket IPC server
+│   │   │   ├── process.rs # Process lifecycle manager
+│   │   │   ├── hooks.rs   # Signal handling
+│   │   │   ├── system/    # Desktop integration subsystems
+│   │   │   │   ├── upower.rs       # Battery/power state
+│   │   │   │   ├── network.rs      # NetworkManager connectivity
+│   │   │   │   ├── window.rs       # Window focus tracking
+│   │   │   │   ├── workspace.rs    # Workspace awareness
+│   │   │   │   ├── clipboard.rs    # Clipboard monitoring
+│   │   │   │   ├── notifications.rs# Freedesktop notifications
+│   │   │   │   └── audio.rs        # PulseAudio + MPRIS
+│   │   │   └── types/
+│   │   │       ├── events.rs       # SystemEvent, EventKind, EventPayload
+│   │   │       └── ipc.rs          # IpcMessage, Command, Response
+│   │   └── Cargo.toml
+│   └── ai-runtime/        # Python AI inference layer (coming)
+│
+├── shell/
+│   └── ena-bar/           # Native GTK4 bar (Rust)
+│       ├── src/
+│       │   ├── main.rs    # GTK4 app, layer-shell setup
+│       │   ├── bar.rs     # Widget tree, system context display
+│       │   ├── ipc.rs     # Unix socket client
+│       │   ├── audio.rs   # Audio capture stub
+│       │   ├── config.rs  # CLI args
+│       │   └── style.css  # Dark theme
+│       └── Cargo.toml
+│
+├── apps/
+│   └── ena-bar/           # Tauri + React bar (legacy/alternative)
+│
+├── packages/
+│   ├── shared-types/      # TypeScript shared types
+│   └── design-system.md   # Color palette, typography, component specs
+│
+├── docs/
+│   └── architecture/      # System architecture documents
+│
+└── scripts/
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology | Purpose |
+| :--- | :--- | :--- |
+| **System Daemon** | Rust + tokio | Event bus, IPC, process management |
+| **Desktop Integration** | zbus (D-Bus) | UPower, NetworkManager, notifications |
+| **Frontend** | GTK4 + libadwaita | Native rendering, layer-shell overlay |
+| **Wayland** | gtk4-layer-shell | Bottom-anchored overlay surface |
+| **Window Tracking** | swaymsg / hyprctl / gdbus | Multi-compositor support |
+| **Audio** | pactl + MPRIS D-Bus | Volume, device, media playback |
+| **Clipboard** | wl-clipboard / xclip | Content change monitoring |
+| **AI Runtime** | Python + Ollama (coming) | Local inference, streaming |
 
 ---
 
 ## Quick Start
 
-### Path A: Building the Environment
-EnaOS is currently in early developer preview. You can initialize the project structure and marketing layer:
+### Prerequisites
+
+- Linux with Wayland (GNOME, Sway, or Hyprland)
+- Rust 1.75+
+- GTK4 + libadwaita development libraries
+- D-Bus session and system buses
+
+### Build enad (System Daemon)
 
 ```bash
-# Clone the monorepo
-git clone https://github.com/anshull-saxena/EnaOS.git && cd EnaOS
-
-# Install dependencies (Node.js 18+ required)
-cd apps/landing-page && npm install
-
-# Run the cinematic landing page locally
-npm run dev
+cd runtimes/enad
+cargo build --release
 ```
 
-### Path B: CLI Installer
-> ⚠️ **Status: Pending.** The automated install script is currently being synthesized.
+### Build ena-bar (GTK4 Frontend)
+
+```bash
+cd shell/ena-bar
+cargo build --release
+```
+
+### Run
+
+```bash
+# Start the daemon
+./runtimes/enad/target/release/enad --socket /tmp/enad.sock
+
+# Start the bar (in another terminal)
+./shell/ena-bar/target/release/ena-bar --socket-path /tmp/enad.sock
+```
+
+### Desktop Integration Requirements
+
+| Subsystem | Required Package | Optional |
+| :--- | :--- | :--- |
+| Battery | `upower` | — |
+| Network | `NetworkManager` | — |
+| Window Focus | `sway` / `hyprland` / `gnome-shell` | `xprop` (fallback) |
+| Clipboard | `wl-clipboard` | `xclip` (X11 fallback) |
+| Audio | `pulseaudio` / `pipewire-pulse` | — |
+| Notifications | Any fdo.Notifications server | — |
 
 ---
 
-## Core Modules
+## IPC Protocol
 
-### 📡 Ena Bar (`/ena-bar`)
-The centerpiece of the OS. A floating interaction layer that replaces the taskbar. It uses `framer-motion` for fluid HUD expansion and real-time audio visualization.
+All communication between `ena-bar` and `enad` happens over a Unix domain socket using line-delimited JSON:
 
-### 🤖 Agent Engine (`/agent-engine`)
-Handles the lifecycle of autonomous workers. It is designed to support multi-agent handoffs, allowing a "Researcher Agent" to pass findings to a "Coding Agent."
-
-### 💾 Memory Engine (`/memory-engine`)
-`UNDER DEVELOPMENT` — A persistent contextual layer built on a vector-graph hybrid database. It ensures system-wide context retrieval across different sessions.
-
----
-
-## Planned Use Cases
-
-*   **Autonomous PR Management:** "Ena, review the latest issue on GitHub and draft a fix in the `/core` directory."
-*   **Deep Research Synthesis:** "Research advancements in solid-state batteries and prepare a technical brief."
-*   **Contextual Debugging:** "Explain why this Rust build is failing based on my changes from today."
+```json
+{"id": "uuid", "type": "Subscribe", "body": {"kinds": []}}
+{"id": "uuid", "type": "Ping"}
+{"id": "uuid", "type": "Pong"}
+{"id": "uuid", "type": "Event", "body": {"source": "upower", "kind": "System", "payload": {"type": "BatteryStatus", "data": {"percentage": 87.2, "state": "discharging"}}}}
+```
 
 ---
 
-##  Configuration & Extensibility
+## Design Philosophy
 
-### Configuration
-EnaOS will be configurable via `config.yaml`.
-> ⚠️ **Status: Specification Pending.**
-
-### Extensibility
-Build your own agents using the Ena SDK.
-*   **Rust SDK:** `/sdk/rust` — For high-performance system agents.
-*   **TypeScript SDK:** `/sdk/typescript` — For UI-driven extensions.
-
----
-
-## Security & Reliability
-
-*   **Sandboxed Execution:** `PENDING` — Autonomous actions are designed to run in isolated environments.
-*   **Human-in-the-Loop:** High-impact actions require manual approval via the Ena Bar.
-*   **Transparency:** Every "thought" and "action" is logged in the Execution Trace for user auditing.
-
----
-
-## Docs & Support
-
-| Target | Resource |
-| :--- | :--- |
-| **Project Status** | [Roadmap & Synthesis Stage](#) |
-| **Developer Guide** | [Building for EnaOS](#) |
-| **Community** | [Join the Discord](#) |
+- **Daemon-driven:** The frontend is a thin reactive renderer. All business logic lives in `enad`.
+- **Real state only:** No simulated UI, no fake workflows. Every bar element reflects actual OS state.
+- **Graceful degradation:** If a subsystem is unavailable, it logs and exits cleanly — enad never crashes.
+- **Compositor-agnostic:** Window tracking works on GNOME, Sway, and Hyprland with xprop fallback.
+- **Local-first:** Designed for local inference. Cloud is a fallback, not a requirement.
 
 ---
 
 ## License
 
-EnaOS is released under the **MIT License**. Built by the community for the autonomous age.
+EnaOS is released under the **MIT License**.

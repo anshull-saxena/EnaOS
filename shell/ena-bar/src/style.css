@@ -1,0 +1,108 @@
+/* ══════════════════════════════════════════════════════════════
+   Ena Bar — Native GTK4 Dark Theme
+   ══════════════════════════════════════════════════════════════
+   Philosophy:  OS-level, minimal, calm, spatial.
+   No dashboard patterns, no fake glass, no web aesthetics.
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Base window ─────────────────────────────────────────────── */
+window {
+    background: rgba(18, 18, 18, 0.92);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── Bar container ───────────────────────────────────────────── */
+.ena-bar-container {
+    background: transparent;
+}
+
+/* ── Bar row ──────────────────────────────────────────────────── */
+.ena-bar-row {
+    background: rgba(24, 24, 24, 0.85);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ── Input entry ─────────────────────────────────────────────── */
+.ena-input {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.92);
+    font-family: "Inter", "SF Pro", system-ui, sans-serif;
+    font-size: 15px;
+    font-weight: 400;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 8px;
+    caret-color: #d4af37;
+}
+
+.ena-input:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ena-input::placeholder {
+    color: rgba(255, 255, 255, 0.25);
+    font-weight: 350;
+}
+
+/* ── Mic button ──────────────────────────────────────────────── */
+.ena-mic-button {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 6px;
+    min-width: 36px;
+    min-height: 36px;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.ena-mic-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.ena-mic-button:active {
+    background: rgba(212, 175, 55, 0.15);
+    color: #d4af37;
+}
+
+/* ── Result label ────────────────────────────────────────────── */
+.ena-result {
+    color: rgba(255, 255, 255, 0.8);
+    font-family: "Inter", "SF Mono", monospace;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.5;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}
+
+/* ── Status bar ──────────────────────────────────────────────── */
+.ena-status {
+    color: rgba(255, 255, 255, 0.35);
+    font-family: "SF Mono", "Cascadia Code", monospace;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────── */
+spinner {
+    color: #d4af37;
+}
+
+/* ── Status dot (DrawingArea) ────────────────────────────────── */
+drawingarea {
+    background: transparent;
+}
+
+/* ── Context label (system awareness) ────────────────────────── */
+.ena-context {
+    color: rgba(255, 255, 255, 0.45);
+    font-family: "SF Mono", "Cascadia Code", monospace;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+}

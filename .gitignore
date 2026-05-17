@@ -92,6 +92,10 @@ apps/landing-page/
 logs/
 *.log
 
+# Tauri generated
+apps/ena-bar/src-tauri/gen/
+apps/ena-bar/src-tauri/target/
+
 # Databases
 *.sqlite
 *.db
