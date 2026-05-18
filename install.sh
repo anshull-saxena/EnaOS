@@ -484,19 +484,19 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     cd "$INSTALL_DIR"
     git pull origin main
     ok "Repository updated"
+elif [ "$DRY_RUN" = true ]; then
+    log "[DRY RUN] Would clone to $INSTALL_DIR"
 else
-    if [ "$DRY_RUN" = true ]; then
-        log "[DRY RUN] Would clone to $INSTALL_DIR"
-    else
-        mkdir -p "$INSTALL_DIR"
-        log "Cloning repository..."
-        git clone https://github.com/anshull-saxena/EnaOS "$INSTALL_DIR" 2>&1 | tail -1
-        ok "Repository cloned"
-    fi
+    mkdir -p "$INSTALL_DIR"
+    log "Cloning repository..."
+    git clone https://github.com/anshull-saxena/EnaOS "$INSTALL_DIR" 2>&1 | tail -1
+    ok "Repository cloned"
 fi
 
 echo ""
-cd "$INSTALL_DIR"
+if [ "$DRY_RUN" = false ] || [ -d "$INSTALL_DIR/.git" ]; then
+    cd "$INSTALL_DIR"
+fi
 
 # ════════════════════════════════════════════════════════════════════
 #  BUILD COMPONENTS
