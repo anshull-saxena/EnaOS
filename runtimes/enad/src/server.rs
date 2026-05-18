@@ -8,6 +8,7 @@ use crate::actions::types::{ActionRequest, ActionType};
 use crate::bus::EventBus;
 use crate::memory::store::MemoryStore;
 use crate::memory::types::MemoryQuery;
+use crate::orchestration::engine::OrchestrationEngine;
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -16,13 +17,19 @@ pub struct IpcServer {
     bus: Arc<EventBus>,
     action_executor: Arc<ActionExecutor>,
     memory_store: Arc<MemoryStore>,
+    orchestration: Arc<OrchestrationEngine>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
 
 impl IpcServer {
-    /// Bind to a Unix domain socket path.
-    pub fn bind(path: &str, bus: Arc<EventBus>, action_executor: Arc<ActionExecutor>, memory_store: Arc<MemoryStore>) -> std::io::Result<Self> {
+    pub fn bind(
+        path: &str,
+        bus: Arc<EventBus>,
+        action_executor: Arc<ActionExecutor>,
+        memory_store: Arc<MemoryStore>,
+        orchestration: Arc<OrchestrationEngine>,
+    ) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
         let listener = UnixListener::bind(path)?;
@@ -35,6 +42,7 @@ impl IpcServer {
             bus,
             action_executor,
             memory_store,
+            orchestration,
             shutdown_tx,
         })
     }
@@ -51,9 +59,10 @@ impl IpcServer {
                             let bus = self.bus.clone();
                             let executor = self.action_executor.clone();
                             let memory = self.memory_store.clone();
+                            let orch = self.orchestration.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, executor, memory, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, memory, orch, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
@@ -84,6 +93,7 @@ async fn handle_connection(
     bus: Arc<EventBus>,
     executor: Arc<ActionExecutor>,
     memory: Arc<MemoryStore>,
+    orchestration: Arc<OrchestrationEngine>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -111,7 +121,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus, &executor, &memory).await;
+                                let response = dispatch(msg, &bus, &executor, &memory, &orchestration).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -169,12 +179,18 @@ async fn handle_connection(
 }
 
 /// Dispatch an IPC message and produce a response.
-async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor, memory: &MemoryStore) -> IpcMessage {
+async fn dispatch(
+    msg: IpcMessage,
+    bus: &EventBus,
+    executor: &ActionExecutor,
+    memory: &MemoryStore,
+    orchestration: &OrchestrationEngine,
+) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor, memory).await;
+            let response = handle_command(cmd, bus, executor, memory, orchestration).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
@@ -202,7 +218,13 @@ async fn dispatch(msg: IpcMessage, bus: &EventBus, executor: &ActionExecutor, me
 }
 
 /// Handle an IPC command.
-async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor, memory: &MemoryStore) -> Response {
+async fn handle_command(
+    cmd: Command,
+    bus: &EventBus,
+    executor: &ActionExecutor,
+    memory: &MemoryStore,
+    orchestration: &OrchestrationEngine,
+) -> Response {
     match cmd {
         Command::Execute { command, args } => {
             Response::Ok {
@@ -361,6 +383,63 @@ async fn handle_command(cmd: Command, bus: &EventBus, executor: &ActionExecutor,
                 "version": env!("CARGO_PKG_VERSION"),
             }),
         },
+        // ── Orchestration commands ──
+        Command::SubmitPlan { plan } => {
+            match serde_json::from_value::<crate::orchestration::types::ExecutionPlan>(plan) {
+                Ok(plan) => {
+                    let plan_id = orchestration.submit_plan(plan).await;
+                    Response::Data {
+                        payload: serde_json::json!({
+                            "plan_id": plan_id,
+                            "status": "submitted",
+                        }),
+                    }
+                }
+                Err(e) => Response::Error {
+                    code: "INVALID_PLAN".into(),
+                    message: format!("Invalid plan: {e}"),
+                },
+            }
+        }
+        Command::ApprovePlan { plan_id } => {
+            match orchestration.approve_plan(plan_id).await {
+                Ok(()) => Response::Ok {
+                    message: Some(format!("Plan {plan_id} approved")),
+                },
+                Err(e) => Response::Error {
+                    code: "APPROVE_FAILED".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::RejectPlan { plan_id } => {
+            match orchestration.reject_plan(plan_id).await {
+                Ok(()) => Response::Ok {
+                    message: Some(format!("Plan {plan_id} rejected")),
+                },
+                Err(e) => Response::Error {
+                    code: "REJECT_FAILED".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::CancelPlan { plan_id } => {
+            match orchestration.cancel_plan(plan_id).await {
+                Ok(()) => Response::Ok {
+                    message: Some(format!("Plan {plan_id} cancelled")),
+                },
+                Err(e) => Response::Error {
+                    code: "CANCEL_FAILED".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::ListPlans => {
+            let plans = orchestration.list_plans().await;
+            Response::Data {
+                payload: serde_json::to_value(&plans).unwrap_or(serde_json::json!([])),
+            }
+        }
     }
 }
 

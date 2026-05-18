@@ -2,6 +2,7 @@ mod actions;
 mod bus;
 mod hooks;
 mod memory;
+mod orchestration;
 mod process;
 mod server;
 mod types;
@@ -46,6 +47,10 @@ async fn main() -> anyhow::Result<()> {
     let bus = Arc::new(bus::EventBus::default());
     let process_manager = Arc::new(process::ProcessManager::new(bus.clone()));
     let action_executor = Arc::new(actions::executor::ActionExecutor::new(bus.clone()));
+    let orchestration = Arc::new(orchestration::engine::OrchestrationEngine::new(
+        bus.clone(),
+        action_executor.clone(),
+    ));
     let system_hooks = hooks::SystemHooks::new(bus.clone());
 
     // ── Memory subsystem ──
@@ -63,7 +68,9 @@ async fn main() -> anyhow::Result<()> {
     let memory_capture = memory::capture::MemoryCapture::new(memory_store.clone());
 
     // ── IPC server ──
-    let server = server::IpcServer::bind(&cli.socket, bus.clone(), action_executor.clone(), memory_store.clone())?;
+    let server = server::IpcServer::bind(
+        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), orchestration.clone(),
+    )?;
     let shutdown_handle = server.shutdown_handle();
 
     // ── Spawn subsystems ──

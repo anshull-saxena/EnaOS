@@ -92,6 +92,9 @@ apps/landing-page/
 logs/
 *.log
 
+# Playwright MCP session files
+.playwright-mcp/
+
 # Tauri generated
 apps/ena-bar/src-tauri/gen/
 apps/ena-bar/src-tauri/target/

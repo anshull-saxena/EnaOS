@@ -172,6 +172,21 @@ pub enum EventPayload {
         action_id: Uuid,
     },
 
+    // ── Orchestration events ──
+    OrchestrationPlanEvent {
+        plan_id: Uuid,
+        status: String,
+        message: String,
+    },
+    OrchestrationNodeEvent {
+        plan_id: Uuid,
+        node_id: Uuid,
+        status: String,
+        label: String,
+        error: Option<String>,
+        result: Option<String>,
+    },
+
     // ── Debug ──
     Log {
         level: String,

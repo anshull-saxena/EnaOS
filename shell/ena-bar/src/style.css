@@ -115,3 +115,105 @@ drawingarea {
     font-weight: 500;
     letter-spacing: 0.2px;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Orchestration Timeline — execution visibility
+   ══════════════════════════════════════════════════════════════ */
+
+.ena-orch-container {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    margin: 0 8px;
+}
+
+/* ── Approval bar ──────────────────────────────────────────── */
+.ena-orch-approval-label {
+    color: rgba(255, 255, 255, 0.8);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 450;
+}
+
+.ena-orch-approve-btn {
+    background: rgba(60, 180, 75, 0.2);
+    color: #4caf50;
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 12px;
+}
+
+.ena-orch-approve-btn:hover {
+    background: rgba(76, 175, 80, 0.35);
+}
+
+.ena-orch-reject-btn {
+    background: rgba(200, 60, 60, 0.15);
+    color: #e57373;
+    border: 1px solid rgba(229, 115, 115, 0.25);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 12px;
+}
+
+.ena-orch-reject-btn:hover {
+    background: rgba(229, 115, 115, 0.3);
+}
+
+/* ── Node list ─────────────────────────────────────────────── */
+.ena-orch-list {
+    background: transparent;
+    border-spacing: 0;
+}
+
+.ena-orch-header {
+    color: rgba(255, 255, 255, 0.6);
+    font-family: "SF Mono", monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+}
+
+.ena-orch-node-label {
+    color: rgba(255, 255, 255, 0.72);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.ena-orch-icon {
+    font-size: 12px;
+    min-width: 16px;
+}
+
+.ena-orch-pending { color: rgba(255, 255, 255, 0.3); }
+
+.ena-orch-running {
+    color: #ffd54f;
+    font-weight: 600;
+}
+
+.ena-orch-done { color: #4caf50; }
+
+.ena-orch-failed { color: #e57373; }
+
+.ena-orch-skipped { color: rgba(255, 255, 255, 0.35); }
+
+.ena-orch-cancelled { color: rgba(255, 255, 255, 0.45); }
+
+.ena-orch-msg {
+    color: rgba(255, 255, 255, 0.45);
+    font-family: "SF Mono", monospace;
+    font-size: 11px;
+    font-style: italic;
+}
+
+/* ── Summary ───────────────────────────────────────────────── */
+.ena-orch-summary {
+    color: rgba(255, 255, 255, 0.6);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+}

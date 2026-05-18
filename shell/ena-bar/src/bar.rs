@@ -5,6 +5,7 @@ use gtk4::glib;
 use serde_json::Value;
 
 use crate::ipc::EnadEvent;
+use crate::orchestration_ui::{TimelineWidget, OrchestrationDisplay, parse_plan_event, parse_node_event};
 
 /// Internal state of the Ena Bar.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +58,9 @@ pub struct EnaBar {
     // Action execution display.
     action_label: gtk4::Label,
     action_revealer: gtk4::Revealer,
+
+    // Orchestration execution visibility.
+    timeline: Arc<TimelineWidget>,
 
     // Internal context tracker.
     context: std::sync::Mutex<SystemContext>,
@@ -179,6 +183,9 @@ impl EnaBar {
             .child(&action_label)
             .build();
 
+        // ── Orchestration timeline ──────────────────────────────
+        let timeline = TimelineWidget::new();
+
         // ── Main bar row ────────────────────────────────────────
         let bar_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -202,6 +209,7 @@ impl EnaBar {
             .build();
         container.append(&result_revealer);
         container.append(&bar_row);
+        container.append(&timeline.container);
         container.append(&status_revealer);
         container.append(&context_revealer);
         container.append(&action_revealer);
@@ -221,6 +229,7 @@ impl EnaBar {
             context_revealer,
             action_label,
             action_revealer,
+            timeline,
             context: std::sync::Mutex::new(SystemContext::default()),
         });
 
@@ -407,6 +416,9 @@ impl EnaBar {
 
                 // Handle action lifecycle events.
                 self.handle_action_event(&kind, &payload);
+
+                // Handle orchestration plan/node events.
+                self.handle_orchestration_event(&kind, &payload);
             }
             EnadEvent::Raw(raw) => {
                 tracing::warn!("Unparsed IPC message: {raw}");
@@ -543,6 +555,75 @@ impl EnaBar {
                     action_rev.set_reveal_child(false);
                     glib::ControlFlow::Break
                 });
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle orchestration plan and node lifecycle events.
+    fn handle_orchestration_event(&self, kind: &str, payload: &Value) {
+        if kind != "System" {
+            return;
+        }
+
+        let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            "OrchestrationPlanEvent" => {
+                if let Some((plan_id, status, message)) = parse_plan_event(payload) {
+                    tracing::info!("Plan {plan_id}: {status} — {message}");
+
+                    // Update plan-level status in the timeline.
+                    match status.as_str() {
+                        "PendingApproval" => {
+                            // Build an initial display with just the plan info.
+                            let display = OrchestrationDisplay {
+                                plan_id: Some(plan_id.clone()),
+                                plan_title: message.trim_start_matches("Plan requires approval").trim().to_string(),
+                                status: "PendingApproval".to_string(),
+                                message: "Requires approval".to_string(),
+                                nodes: Vec::new(),
+                            };
+                            self.timeline.set_orchestration(display);
+                            self.update_status_dot(0.85, 0.7, 0.2);
+                        }
+                        "Approved" => {
+                            self.timeline.set_status("Approved", "Plan approved");
+                            self.update_status_dot(0.2, 0.8, 0.3);
+                        }
+                        "Running" => {
+                            self.timeline.set_status("Running", &message);
+                            self.update_status_dot(0.85, 0.7, 0.2);
+                        }
+                        "Completed" => {
+                            self.timeline.set_status("Completed", &message);
+                            self.update_status_dot(0.2, 0.8, 0.3);
+                        }
+                        "Failed" => {
+                            self.timeline.set_status("Failed", &message);
+                            self.update_status_dot(0.8, 0.3, 0.3);
+                        }
+                        "Cancelled" => {
+                            self.timeline.set_status("Cancelled", &message);
+                            self.update_status_dot(0.5, 0.5, 0.5);
+                        }
+                        "RollingBack" => {
+                            self.timeline.set_status("RollingBack", &message);
+                            self.update_status_dot(0.85, 0.6, 0.2);
+                        }
+                        "RolledBack" => {
+                            self.timeline.set_status("RolledBack", &message);
+                            self.update_status_dot(0.5, 0.5, 0.5);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "OrchestrationNodeEvent" => {
+                if let Some((_plan_id, node_id, status, error)) = parse_node_event(payload) {
+                    tracing::info!("Node {node_id}: {status}");
+                    self.timeline.update_node(&node_id, &status, "", error);
+                }
             }
             _ => {}
         }

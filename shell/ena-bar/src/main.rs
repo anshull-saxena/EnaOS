@@ -11,6 +11,7 @@ mod audio;
 mod bar;
 mod config;
 mod ipc;
+mod orchestration_ui;
 
 /// Load embedded CSS stylesheet.
 fn load_style() {

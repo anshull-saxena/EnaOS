@@ -62,6 +62,26 @@ pub enum Command {
     },
     /// Get system context for AI prompts
     GetContext,
+
+    // ── Orchestration commands ──
+    /// Submit an execution plan.
+    SubmitPlan {
+        plan: serde_json::Value,
+    },
+    /// Approve a pending plan.
+    ApprovePlan {
+        plan_id: Uuid,
+    },
+    /// Reject a pending plan.
+    RejectPlan {
+        plan_id: Uuid,
+    },
+    /// Cancel a running plan.
+    CancelPlan {
+        plan_id: Uuid,
+    },
+    /// List all plans.
+    ListPlans,
 }
 
 /// What state to query.

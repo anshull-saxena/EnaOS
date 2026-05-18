@@ -8,8 +8,17 @@ Endpoints:
     GET  /memory        — Working memory summary
     GET  /health        — Runtime health check
     GET  /sessions      — List active sessions
+
+Orchestration endpoints:
+    POST /orchestrate        — Parse intent + submit plan
+    POST /orchestrate/stream  — Stream intent parsing
+    POST /plan/{id}/approve   — Approve a pending plan
+    POST /plan/{id}/reject    — Reject a pending plan
+    POST /plan/{id}/cancel    — Cancel a running plan
+    GET  /plans               — List all plans
 """
 
+import json
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
@@ -20,6 +29,7 @@ from src.context.state import DesktopState
 from src.context.sessions import SessionManager
 from src.inference.ollama import OllamaProvider
 from src.inference.prompt import build_system_prompt, format_memory_context
+from src.orchestration.planner import Planner
 
 app = FastAPI(title="EnaOS AI Runtime", version="0.1.0")
 
@@ -27,6 +37,7 @@ app = FastAPI(title="EnaOS AI Runtime", version="0.1.0")
 desktop_state = DesktopState()
 session_manager = SessionManager()
 provider = OllamaProvider()
+planner = Planner(provider)
 bridge = None  # Set in main.py
 
 
@@ -61,6 +72,27 @@ class HealthResponse(BaseModel):
     enad_connected: bool
     ollama_available: bool
     model: str
+
+
+class OrchestrateRequest(BaseModel):
+    intent: str
+    auto_approve: bool = False
+
+
+class OrchestrateResponse(BaseModel):
+    plan_id: str | None = None
+    title: str
+    description: str
+    node_count: int
+    requires_approval: bool
+    reasons: list[str] = []
+    error: str | None = None
+
+
+class PlanActionResponse(BaseModel):
+    status: str
+    message: str
+    error: str | None = None
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -227,3 +259,181 @@ async def delete_session(session_id: str) -> dict:
     """Delete a session."""
     session_manager.delete(session_id)
     return {"status": "deleted", "session_id": session_id}
+
+
+# ── Orchestration endpoints ─────────────────────────────────
+
+
+@app.post("/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate(req: OrchestrateRequest) -> OrchestrateResponse:
+    """Parse a natural language intent and submit an execution plan to enad.
+
+    The intent is parsed by the LLM into a structured plan, then
+    submitted to enad for approval and execution. The LLM NEVER
+    directly executes actions — it only produces plan documents.
+    """
+    if not bridge or not bridge.connected:
+        return OrchestrateResponse(
+            title="",
+            description="",
+            node_count=0,
+            requires_approval=False,
+            error="enad not connected",
+        )
+
+    # Get working memory for context.
+    memory_context = ""
+    memory_data = await bridge.query_memory("MemorySummary")
+    if memory_data:
+        memory_context = format_memory_context(memory_data)
+
+    # Parse intent into a plan via LLM.
+    plan = await planner.plan(req.intent, desktop_state, memory_context)
+
+    if plan is None:
+        return OrchestrateResponse(
+            title="",
+            description="",
+            node_count=0,
+            requires_approval=False,
+            error="Could not parse intent into an executable plan",
+        )
+
+    # Check if plan requires approval.
+    needs_approval, reasons = planner.plan_requires_approval(plan)
+
+    # Submit to enad.
+    result = await bridge.submit_plan(plan.to_enad_plan())
+
+    if result is None:
+        return OrchestrateResponse(
+            title=plan.title,
+            description=plan.description,
+            node_count=len(plan.nodes),
+            requires_approval=needs_approval,
+            reasons=reasons,
+            error="Failed to submit plan to enad",
+        )
+
+    if "error" in result:
+        return OrchestrateResponse(
+            title=plan.title,
+            description=plan.description,
+            node_count=len(plan.nodes),
+            requires_approval=needs_approval,
+            reasons=reasons,
+            error=result["error"],
+        )
+
+    plan_id = result.get("plan_id", plan.id)
+
+    return OrchestrateResponse(
+        plan_id=plan_id,
+        title=plan.title,
+        description=plan.description,
+        node_count=len(plan.nodes),
+        requires_approval=needs_approval,
+        reasons=reasons,
+    )
+
+
+@app.post("/orchestrate/stream")
+async def orchestrate_stream(req: OrchestrateRequest) -> StreamingResponse:
+    """Stream intent parsing tokens, then auto-submit the plan.
+
+    Returns SSE events:
+      - event: token (raw LLM tokens during parsing)
+      - event: plan (the full parsed plan as JSON)
+      - event: error (if parsing failed)
+    """
+    memory_context = ""
+    if bridge and bridge.connected:
+        memory_data = await bridge.query_memory("MemorySummary")
+        if memory_data:
+            memory_context = format_memory_context(memory_data)
+
+    async def event_stream() -> AsyncIterator[str]:
+        tokens: list[str] = []
+        try:
+            async for token in planner.plan_stream(req.intent, desktop_state, memory_context):
+                tokens.append(token)
+                yield f"event: token\ndata: {token}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {str(e)}\n\n"
+            return
+
+        # Parse the accumulated tokens.
+        full_text = "".join(tokens)
+        plan = planner._parse_plan_response(full_text)
+        if plan is None:
+            yield "event: error\ndata: Could not parse intent into a plan\n\n"
+            return
+
+        # Submit to enad if connected.
+        if bridge and bridge.connected:
+            result = await bridge.submit_plan(plan.to_enad_plan())
+            if result and "plan_id" in result:
+                plan.id = result["plan_id"]
+
+        yield f"event: plan\ndata: {json.dumps({'plan_id': plan.id, 'title': plan.title, 'node_count': len(plan.nodes)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.post("/plan/{plan_id}/approve", response_model=PlanActionResponse)
+async def approve_plan(plan_id: str) -> PlanActionResponse:
+    """Approve a pending execution plan."""
+    if not bridge or not bridge.connected:
+        return PlanActionResponse(status="error", message="", error="enad not connected")
+
+    result = await bridge.approve_plan(plan_id)
+    if result is None:
+        return PlanActionResponse(status="error", message="", error="No response from enad")
+
+    if "error" in result:
+        return PlanActionResponse(status="error", message="", error=result["error"])
+
+    return PlanActionResponse(status="approved", message=f"Plan {plan_id} approved")
+
+
+@app.post("/plan/{plan_id}/reject", response_model=PlanActionResponse)
+async def reject_plan(plan_id: str) -> PlanActionResponse:
+    """Reject a pending execution plan."""
+    if not bridge or not bridge.connected:
+        return PlanActionResponse(status="error", message="", error="enad not connected")
+
+    result = await bridge.reject_plan(plan_id)
+    if result is None:
+        return PlanActionResponse(status="error", message="", error="No response from enad")
+
+    if "error" in result:
+        return PlanActionResponse(status="error", message="", error=result["error"])
+
+    return PlanActionResponse(status="rejected", message=f"Plan {plan_id} rejected")
+
+
+@app.post("/plan/{plan_id}/cancel")
+async def cancel_plan(plan_id: str) -> dict:
+    """Cancel a running execution plan."""
+    if not bridge or not bridge.connected:
+        return {"status": "error", "error": "enad not connected"}
+
+    result = await bridge.cancel_plan(plan_id)
+    if result and "error" in result:
+        return {"status": "error", "error": result["error"]}
+
+    return {"status": "cancelled", "plan_id": plan_id}
+
+
+@app.get("/plans")
+async def list_plans() -> list[dict]:
+    """List all plans (active + pending)."""
+    if not bridge or not bridge.connected:
+        return []
+
+    plans = await bridge.list_plans()
+    return plans or []
