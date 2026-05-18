@@ -7,11 +7,13 @@ use gtk4::prelude::*;
 use gtk4::{gdk, glib, EventControllerKey};
 use tracing_subscriber::EnvFilter;
 
+mod ambient_ui;
 mod audio;
 mod bar;
 mod config;
 mod ipc;
 mod orchestration_ui;
+mod restoration_ui;
 
 /// Load embedded CSS stylesheet.
 fn load_style() {
@@ -66,8 +68,8 @@ fn main() -> glib::ExitCode {
         #[cfg(not(target_os = "linux"))]
         setup_macos_window(&window);
 
-        // ── Bar widget ──────────────────────────────────────────
-        let ena_bar = bar::EnaBar::new();
+        // ── Bar widget (with socket_path for IPC commands) ──────
+        let ena_bar = bar::EnaBar::new(&socket_path);
         window.set_child(Some(&ena_bar.container));
 
         // ── Keyboard shortcut controller ────────────────────────
@@ -104,6 +106,8 @@ fn main() -> glib::ExitCode {
                 while let Ok(event) = rx.try_recv() {
                     ena_bar.handle_event(event);
                 }
+                // Poll the restoration widget's IPC response channel.
+                ena_bar.poll_restoration();
                 glib::ControlFlow::Continue
             }
         });

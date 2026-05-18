@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 /// Top-level event on the enad event bus.
@@ -186,6 +187,41 @@ pub enum EventPayload {
         error: Option<String>,
         result: Option<String>,
     },
+
+    // ── Workspace Snapshot events ──
+    SnapshotTaken {
+        snapshot_id: Uuid,
+        label: String,
+        node_count: u32,
+    },
+    SnapshotDeleted {
+        snapshot_id: Uuid,
+    },
+
+    // ── Restoration events ──
+    RestorePreviewGenerated {
+        snapshot_id: Uuid,
+        plan_id: Uuid,
+        action_count: u32,
+    },
+    RestoreStarted {
+        snapshot_id: Uuid,
+        plan_id: Uuid,
+        description: String,
+    },
+
+    // ── Ambient suggestions ──
+    SuggestionGenerated {
+        suggestion_id: Uuid,
+        kind: String,
+        title: String,
+        description: String,
+        priority: f64,
+        action_label: Option<String>,
+        action_type: Option<String>,
+        action_payload: Value,
+    },
+    SuggestionDismissed { suggestion_id: Uuid, reason: String },
 
     // ── Debug ──
     Log {

@@ -437,3 +437,155 @@ async def list_plans() -> list[dict]:
 
     plans = await bridge.list_plans()
     return plans or []
+
+
+# ── Workspace Snapshot endpoints ────────────────────────────
+
+
+class SnapshotTakeRequest(BaseModel):
+    label: str | None = None
+
+
+class SnapshotTakeResponse(BaseModel):
+    snapshot_id: str | None = None
+    status: str
+    error: str | None = None
+
+
+@app.post("/snapshot/take", response_model=SnapshotTakeResponse)
+async def take_snapshot(req: SnapshotTakeRequest) -> SnapshotTakeResponse:
+    """Take a workspace snapshot."""
+    if not bridge or not bridge.connected:
+        return SnapshotTakeResponse(status="error", error="enad not connected")
+
+    result = await bridge.take_snapshot(req.label)
+    if result is None:
+        return SnapshotTakeResponse(status="error", error="No response from enad")
+    if "error" in result:
+        return SnapshotTakeResponse(status="error", error=result["error"])
+
+    return SnapshotTakeResponse(
+        snapshot_id=result.get("snapshot_id"),
+        status="taken",
+    )
+
+
+@app.get("/snapshots")
+async def list_snapshots(limit: int = 20) -> list[dict]:
+    """List recent workspace snapshots."""
+    if not bridge or not bridge.connected:
+        return []
+    snapshots = await bridge.list_snapshots(limit)
+    return snapshots or []
+
+
+@app.get("/snapshot/{snapshot_id}")
+async def get_snapshot(snapshot_id: str) -> dict:
+    """Get a full snapshot by ID."""
+    if not bridge or not bridge.connected:
+        return {"error": "enad not connected"}
+    result = await bridge.get_snapshot(snapshot_id)
+    return result or {"error": "Not found"}
+
+
+@app.delete("/snapshot/{snapshot_id}")
+async def delete_snapshot(snapshot_id: str) -> dict:
+    """Delete a snapshot."""
+    if not bridge or not bridge.connected:
+        return {"status": "error", "error": "enad not connected"}
+    result = await bridge.delete_snapshot(snapshot_id)
+    if result and "error" in result:
+        return {"status": "error", "error": result["error"]}
+    return {"status": "deleted", "snapshot_id": snapshot_id}
+
+
+# ── Restoration endpoints ──────────────────────────────────
+
+
+class RestoreSelections(BaseModel):
+    applications: bool = True
+    workspaces: bool = True
+    terminals: bool = False
+    browser_urls: bool = False
+    orchestration_context: bool = False
+
+
+class RestorePreviewResponse(BaseModel):
+    snapshot_id: str
+    snapshot_label: str
+    snapshot_taken_at: str
+    action_count: int
+    actions: list[dict]
+    error: str | None = None
+
+
+@app.post("/snapshot/{snapshot_id}/preview", response_model=RestorePreviewResponse)
+async def preview_restore(snapshot_id: str) -> RestorePreviewResponse:
+    """Preview what restoring a snapshot would do."""
+    if not bridge or not bridge.connected:
+        return RestorePreviewResponse(
+            snapshot_id=snapshot_id, snapshot_label="", snapshot_taken_at="",
+            action_count=0, actions=[], error="enad not connected",
+        )
+
+    result = await bridge.preview_restore(snapshot_id)
+    if result is None or "error" in (result or {}):
+        return RestorePreviewResponse(
+            snapshot_id=snapshot_id, snapshot_label="", snapshot_taken_at="",
+            action_count=0, actions=[], error=(result or {}).get("error", "Preview failed"),
+        )
+
+    return RestorePreviewResponse(
+        snapshot_id=result.get("snapshot_id", snapshot_id),
+        snapshot_label=result.get("snapshot_label", ""),
+        snapshot_taken_at=result.get("snapshot_taken_at", ""),
+        action_count=result.get("action_count", 0),
+        actions=result.get("actions", []),
+    )
+
+
+class RestoreRequest(BaseModel):
+    selections: RestoreSelections | None = None
+
+
+class RestoreResponse(BaseModel):
+    snapshot_id: str
+    plan_id: str | None = None
+    action_count: int
+    status: str
+    error: str | None = None
+
+
+@app.post("/snapshot/{snapshot_id}/restore", response_model=RestoreResponse)
+async def restore_snapshot(snapshot_id: str, req: RestoreRequest) -> RestoreResponse:
+    """Restore a workspace snapshot as an orchestration plan.
+
+    The restoration plan goes through the standard approval flow.
+    The user must approve it before actions are executed.
+    """
+    if not bridge or not bridge.connected:
+        return RestoreResponse(
+            snapshot_id=snapshot_id, action_count=0,
+            status="error", error="enad not connected",
+        )
+
+    selections = req.selections.model_dump() if req.selections else None
+    result = await bridge.restore_snapshot(snapshot_id, selections)
+
+    if result is None:
+        return RestoreResponse(
+            snapshot_id=snapshot_id, action_count=0,
+            status="error", error="No response from enad",
+        )
+    if "error" in result:
+        return RestoreResponse(
+            snapshot_id=snapshot_id, action_count=0,
+            status="error", error=result["error"],
+        )
+
+    return RestoreResponse(
+        snapshot_id=result.get("snapshot_id", snapshot_id),
+        plan_id=result.get("plan_id"),
+        action_count=result.get("action_count", 0),
+        status="plan_submitted",
+    )

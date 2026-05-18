@@ -190,3 +190,52 @@ class EnadBridge:
         if isinstance(result, list):
             return result
         return None
+
+    # ── Snapshot commands ──
+
+    async def take_snapshot(self, label: str | None = None) -> dict | None:
+        """Take a workspace snapshot."""
+        body: dict[str, object] = {"type": "TakeSnapshot"}
+        if label:
+            body["label"] = label
+        return await self._send_command(body)
+
+    async def list_snapshots(self, limit: int = 20) -> list[dict] | None:
+        """List recent snapshots."""
+        result = await self._send_command({"type": "ListSnapshots", "limit": limit})
+        if isinstance(result, list):
+            return result
+        return None
+
+    async def get_snapshot(self, snapshot_id: str) -> dict | None:
+        """Get a full snapshot by ID."""
+        return await self._send_command({
+            "type": "GetSnapshot",
+            "snapshot_id": snapshot_id,
+        })
+
+    async def delete_snapshot(self, snapshot_id: str) -> dict | None:
+        """Delete a snapshot."""
+        return await self._send_command({
+            "type": "DeleteSnapshot",
+            "snapshot_id": snapshot_id,
+        })
+
+    # ── Restoration commands ──
+
+    async def preview_restore(self, snapshot_id: str) -> dict | None:
+        """Preview what restoring a snapshot would do."""
+        return await self._send_command({
+            "type": "PreviewRestore",
+            "snapshot_id": snapshot_id,
+        })
+
+    async def restore_snapshot(self, snapshot_id: str, selections: dict | None = None) -> dict | None:
+        """Restore a snapshot as an orchestration plan."""
+        body: dict[str, object] = {
+            "type": "RestoreSnapshot",
+            "snapshot_id": snapshot_id,
+        }
+        if selections:
+            body["selections"] = selections
+        return await self._send_command(body)

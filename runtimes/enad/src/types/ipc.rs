@@ -82,6 +82,46 @@ pub enum Command {
     },
     /// List all plans.
     ListPlans,
+
+    // ── Workspace Snapshot commands ──
+    /// Take a workspace snapshot.
+    TakeSnapshot {
+        label: Option<String>,
+    },
+    /// List recent snapshots.
+    ListSnapshots {
+        limit: Option<u32>,
+    },
+    /// Get a full snapshot by ID.
+    GetSnapshot {
+        snapshot_id: Uuid,
+    },
+    /// Delete a snapshot.
+    DeleteSnapshot {
+        snapshot_id: Uuid,
+    },
+
+    // ── Restoration commands ──
+    /// Preview what a snapshot restoration would do.
+    PreviewRestore {
+        snapshot_id: Uuid,
+    },
+    /// Restore a workspace snapshot as an orchestration plan.
+    RestoreSnapshot {
+        snapshot_id: Uuid,
+        selections: Option<serde_json::Value>,
+    },
+
+    // ── Ambient suggestion commands ──
+    /// Get active suggestions.
+    GetSuggestions {
+        limit: Option<u32>,
+    },
+    /// Dismiss a suggestion.
+    DismissSuggestion {
+        suggestion_id: Uuid,
+        permanent: Option<bool>,
+    },
 }
 
 /// What state to query.

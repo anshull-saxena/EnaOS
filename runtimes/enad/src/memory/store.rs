@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Duration, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use tracing::info;
 
 use crate::memory::types::{MemoryEntry, MemoryQuery, MemorySummary, MemoryType};

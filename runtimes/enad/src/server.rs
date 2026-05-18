@@ -9,6 +9,11 @@ use crate::bus::EventBus;
 use crate::memory::store::MemoryStore;
 use crate::memory::types::MemoryQuery;
 use crate::orchestration::engine::OrchestrationEngine;
+use crate::snapshot::capture;
+use crate::snapshot::store::SnapshotStore;
+use crate::restore::plan::RestorePlanner;
+use crate::restore::types::{RestoreSelections, RestoreResult};
+use crate::suggestion::engine::SuggestionEngine;
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -17,7 +22,9 @@ pub struct IpcServer {
     bus: Arc<EventBus>,
     action_executor: Arc<ActionExecutor>,
     memory_store: Arc<MemoryStore>,
+    snapshot_store: Arc<SnapshotStore>,
     orchestration: Arc<OrchestrationEngine>,
+    suggestion_engine: Arc<SuggestionEngine>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -28,7 +35,9 @@ impl IpcServer {
         bus: Arc<EventBus>,
         action_executor: Arc<ActionExecutor>,
         memory_store: Arc<MemoryStore>,
+        snapshot_store: Arc<SnapshotStore>,
         orchestration: Arc<OrchestrationEngine>,
+        suggestion_engine: Arc<SuggestionEngine>,
     ) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
@@ -42,7 +51,9 @@ impl IpcServer {
             bus,
             action_executor,
             memory_store,
+            snapshot_store,
             orchestration,
+            suggestion_engine,
             shutdown_tx,
         })
     }
@@ -59,10 +70,12 @@ impl IpcServer {
                             let bus = self.bus.clone();
                             let executor = self.action_executor.clone();
                             let memory = self.memory_store.clone();
+                            let snapshots = self.snapshot_store.clone();
                             let orch = self.orchestration.clone();
+                            let suggestion = self.suggestion_engine.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, executor, memory, orch, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, memory, snapshots, orch, suggestion, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
@@ -93,7 +106,9 @@ async fn handle_connection(
     bus: Arc<EventBus>,
     executor: Arc<ActionExecutor>,
     memory: Arc<MemoryStore>,
+    snapshots: Arc<SnapshotStore>,
     orchestration: Arc<OrchestrationEngine>,
+    suggestion: Arc<SuggestionEngine>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -121,7 +136,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus, &executor, &memory, &orchestration).await;
+                                let response = dispatch(msg, &bus, &executor, &memory, &snapshots, &orchestration, &suggestion).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -184,13 +199,15 @@ async fn dispatch(
     bus: &EventBus,
     executor: &ActionExecutor,
     memory: &MemoryStore,
+    snapshots: &SnapshotStore,
     orchestration: &OrchestrationEngine,
+    suggestion: &SuggestionEngine,
 ) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor, memory, orchestration).await;
+            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
@@ -223,7 +240,9 @@ async fn handle_command(
     bus: &EventBus,
     executor: &ActionExecutor,
     memory: &MemoryStore,
+    snapshots: &SnapshotStore,
     orchestration: &OrchestrationEngine,
+    suggestion: &SuggestionEngine,
 ) -> Response {
     match cmd {
         Command::Execute { command, args } => {
@@ -439,6 +458,165 @@ async fn handle_command(
             Response::Data {
                 payload: serde_json::to_value(&plans).unwrap_or(serde_json::json!([])),
             }
+        }
+        // ── Workspace Snapshot commands ──
+        Command::TakeSnapshot { label } => {
+            let label = label.unwrap_or_else(|| "Manual snapshot".to_string());
+            let snapshot = capture::take_immediate_snapshot(
+                snapshots, memory, orchestration, &label, bus,
+            ).await;
+            match snapshot {
+                Ok(snapshot_id) => {
+                    bus.publish(crate::types::events::SystemEvent::new(
+                        "enad",
+                        crate::types::events::EventKind::System,
+                        crate::types::events::EventPayload::SnapshotTaken {
+                            snapshot_id,
+                            label,
+                            node_count: 0,
+                        },
+                    ));
+                    Response::Data {
+                        payload: serde_json::json!({
+                            "snapshot_id": snapshot_id,
+                            "status": "taken",
+                        }),
+                    }
+                }
+                Err(e) => Response::Error {
+                    code: "SNAPSHOT_FAILED".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::ListSnapshots { limit } => {
+            let limit = limit.unwrap_or(20) as usize;
+            match snapshots.list(limit) {
+                Ok(summaries) => Response::Data {
+                    payload: serde_json::to_value(&summaries).unwrap_or(serde_json::json!([])),
+                },
+                Err(e) => Response::Error {
+                    code: "SNAPSHOT_LIST".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::GetSnapshot { snapshot_id } => {
+            match snapshots.get(&snapshot_id) {
+                Ok(Some(snapshot)) => Response::Data {
+                    payload: serde_json::to_value(&snapshot).unwrap_or(serde_json::json!({})),
+                },
+                Ok(None) => Response::Error {
+                    code: "NOT_FOUND".into(),
+                    message: format!("Snapshot {snapshot_id} not found"),
+                },
+                Err(e) => Response::Error {
+                    code: "SNAPSHOT_GET".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::DeleteSnapshot { snapshot_id } => {
+            match snapshots.delete(&snapshot_id) {
+                Ok(true) => {
+                    bus.publish(crate::types::events::SystemEvent::new(
+                        "enad",
+                        crate::types::events::EventKind::System,
+                        crate::types::events::EventPayload::SnapshotDeleted { snapshot_id },
+                    ));
+                    Response::Ok {
+                        message: Some(format!("Snapshot {snapshot_id} deleted")),
+                    }
+                }
+                Ok(false) => Response::Error {
+                    code: "NOT_FOUND".into(),
+                    message: format!("Snapshot {snapshot_id} not found"),
+                },
+                Err(e) => Response::Error {
+                    code: "SNAPSHOT_DELETE".into(),
+                    message: e,
+                },
+            }
+        }
+        // ── Restoration commands ──
+        Command::PreviewRestore { snapshot_id } => {
+            let planner = RestorePlanner;
+            match snapshots.get(&snapshot_id) {
+                Ok(Some(snapshot)) => {
+                    let preview = planner.preview(&snapshot);
+                    Response::Data {
+                        payload: serde_json::to_value(&preview).unwrap_or(serde_json::json!({})),
+                    }
+                }
+                Ok(None) => Response::Error {
+                    code: "NOT_FOUND".into(),
+                    message: format!("Snapshot {snapshot_id} not found"),
+                },
+                Err(e) => Response::Error {
+                    code: "SNAPSHOT_GET".into(),
+                    message: e,
+                },
+            }
+        }
+        Command::RestoreSnapshot { snapshot_id, selections } => {
+            let planner = RestorePlanner;
+
+            let snapshot = match snapshots.get(&snapshot_id) {
+                Ok(Some(s)) => s,
+                Ok(None) => return Response::Error {
+                    code: "NOT_FOUND".into(),
+                    message: format!("Snapshot {snapshot_id} not found"),
+                },
+                Err(e) => return Response::Error {
+                    code: "SNAPSHOT_GET".into(),
+                    message: e,
+                },
+            };
+
+            // Parse optional selection filters.
+            let selections = match selections {
+                Some(val) => serde_json::from_value::<RestoreSelections>(val).ok(),
+                None => None,
+            };
+
+            // Build the restoration plan.
+            let plan = planner.plan_restoration(&snapshot, selections.as_ref());
+            let plan_id = plan.id;
+            let action_count = plan.nodes.len() as u32;
+
+            // Submit to orchestration engine.
+            orchestration.submit_plan(plan).await;
+
+            // Mark snapshot as restored.
+            let _ = snapshots.mark_restored(&snapshot_id);
+
+            // Emit event.
+            bus.publish(crate::types::events::SystemEvent::new(
+                "enad",
+                crate::types::events::EventKind::System,
+                crate::types::events::EventPayload::RestoreStarted {
+                    snapshot_id,
+                    plan_id,
+                    description: format!("Restoration of {} with {action_count} actions", snapshot.label),
+                },
+            ));
+
+            Response::Data {
+                payload: serde_json::to_value(&RestoreResult {
+                    snapshot_id,
+                    plan_id,
+                    action_count,
+                }).unwrap_or(serde_json::json!({})),
+            }
+        }
+
+        // ── Ambient suggestion commands ──
+        Command::GetSuggestions { limit } => {
+            let limit = limit.unwrap_or(5) as usize;
+            suggestion.get_suggestions(limit)
+        }
+        Command::DismissSuggestion { suggestion_id, permanent } => {
+            suggestion.dismiss_suggestion(&suggestion_id, permanent.unwrap_or(false))
         }
     }
 }

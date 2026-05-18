@@ -3,9 +3,10 @@ use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -194,6 +195,40 @@ fn send_ping(writer: &mut UnixStream) {
         }
         let _ = writer.flush();
     }
+}
+
+/// Send a command to enad and wait for a response.
+///
+/// Opens a fresh Unix socket connection, sends the command,
+/// reads one response line, and returns the parsed JSON.
+/// This is a blocking call — use from a background thread or
+/// keep the response fast (Unix socket latency is sub-ms).
+pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Value, String> {
+    let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
+    // Set a read timeout so we don't block forever.
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
+
+    let mut writer = stream.try_clone().map_err(|e| format!("clone: {e}"))?;
+    let mut reader = BufReader::new(stream);
+
+    let msg = json!({
+        "id": Uuid::new_v4(),
+        "type": "Command",
+        "body": {
+            command: body
+        }
+    });
+
+    let json = serde_json::to_string(&msg).map_err(|e| format!("serialize: {e}"))?;
+    writeln!(writer, "{json}").map_err(|e| format!("write: {e}"))?;
+    writer.flush().map_err(|e| format!("flush: {e}"))?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+
+    serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))
 }
 
 fn parse_event(json: Value) -> EnadEvent {

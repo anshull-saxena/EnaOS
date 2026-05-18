@@ -1,11 +1,14 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use gtk4::prelude::*;
 use gtk4::glib;
 use serde_json::Value;
 
+use crate::ambient_ui::{AmbientSuggestionWidget, parse_suggestion_event};
 use crate::ipc::EnadEvent;
 use crate::orchestration_ui::{TimelineWidget, OrchestrationDisplay, parse_plan_event, parse_node_event};
+use crate::restoration_ui::RestorationWidget;
 
 /// Internal state of the Ena Bar.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,13 +65,22 @@ pub struct EnaBar {
     // Orchestration execution visibility.
     timeline: Arc<TimelineWidget>,
 
+    // Restoration suggestion widget.
+    restoration: Arc<RestorationWidget>,
+
+    // Ambient suggestion widget.
+    ambient: Arc<AmbientSuggestionWidget>,
+
+    // Whether we triggered a restore and are waiting for it.
+    is_restoring: AtomicBool,
+
     // Internal context tracker.
     context: std::sync::Mutex<SystemContext>,
 }
 
 impl EnaBar {
     /// Build the complete Ena Bar widget tree.
-    pub fn new() -> Arc<Self> {
+    pub fn new(socket_path: &str) -> Arc<Self> {
         // ── Status dot with frame clock animation ───────────────
         let status_dot = gtk4::DrawingArea::new();
         status_dot.set_content_width(12);
@@ -186,6 +198,12 @@ impl EnaBar {
         // ── Orchestration timeline ──────────────────────────────
         let timeline = TimelineWidget::new();
 
+        // ── Restoration suggestion widget ───────────────────────
+        let restoration = RestorationWidget::new(socket_path.to_string());
+
+        // ── Ambient suggestion widget ───────────────────────────
+        let ambient = AmbientSuggestionWidget::new();
+
         // ── Main bar row ────────────────────────────────────────
         let bar_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -209,6 +227,8 @@ impl EnaBar {
             .build();
         container.append(&result_revealer);
         container.append(&bar_row);
+        container.append(&restoration.container);
+        container.append(&ambient.container);
         container.append(&timeline.container);
         container.append(&status_revealer);
         container.append(&context_revealer);
@@ -230,6 +250,9 @@ impl EnaBar {
             action_label,
             action_revealer,
             timeline,
+            restoration,
+            ambient,
+            is_restoring: AtomicBool::new(false),
             context: std::sync::Mutex::new(SystemContext::default()),
         });
 
@@ -249,6 +272,44 @@ impl EnaBar {
             tracing::info!("Mic button clicked");
             b.show_status("Listening...", 2);
         });
+
+        // Wire restoration callbacks.
+        let restore_bar = bar.clone();
+        *bar.restoration.on_restore.lock().unwrap() = Some(Box::new(move |_snapshot_id| {
+            restore_bar.is_restoring.store(true, Ordering::Relaxed);
+            restore_bar.restoration.on_restore_started();
+            tracing::info!("Restore triggered, waiting for orchestration plan");
+        }));
+
+        let dismiss_bar = bar.clone();
+        *bar.restoration.on_dismiss.lock().unwrap() = Some(Box::new(move || {
+            // Nothing extra needed, suggestion is hidden.
+            tracing::info!("Restoration suggestion dismissed");
+            let _ = &dismiss_bar;
+        }));
+
+        // Wire ambient suggestion callbacks.
+        let amb_socket = socket_path.to_string();
+        *bar.ambient.on_dismiss.lock().unwrap() = Some(Box::new(move |suggestion_id| {
+            let path = amb_socket.clone();
+            std::thread::spawn(move || {
+                let _ = crate::ipc::send_command(
+                    &path,
+                    "DismissSuggestion",
+                    &serde_json::json!({
+                        "suggestion_id": suggestion_id,
+                        "permanent": false,
+                    }),
+                );
+            });
+        }));
+
+        let _act_socket = socket_path.to_string();
+        *bar.ambient.on_act.lock().unwrap() = Some(Box::new(move |_suggestion_id, _action_type| {
+            tracing::info!("Ambient action: {_action_type} on {_suggestion_id}");
+            // Future: trigger action execution via IPC.
+            // Dismiss is handled in the widget immediately.
+        }));
 
         bar
     }
@@ -360,6 +421,8 @@ impl EnaBar {
                 });
                 self.update_status_dot(0.2, 0.8, 0.3);
                 self.set_state(BarState::Expanded);
+                // Check for recent snapshots to suggest restoration.
+                self.restoration.check_for_snapshots();
             }
             EnadEvent::Disconnected => {
                 self.status_label
@@ -419,6 +482,9 @@ impl EnaBar {
 
                 // Handle orchestration plan/node events.
                 self.handle_orchestration_event(&kind, &payload);
+
+                // Handle ambient suggestion events.
+                self.handle_ambient_event(&kind, &payload);
             }
             EnadEvent::Raw(raw) => {
                 tracing::warn!("Unparsed IPC message: {raw}");
@@ -598,14 +664,32 @@ impl EnaBar {
                         "Completed" => {
                             self.timeline.set_status("Completed", &message);
                             self.update_status_dot(0.2, 0.8, 0.3);
+                            if self.is_restoring.load(Ordering::Relaxed) {
+                                self.is_restoring.store(false, Ordering::Relaxed);
+                                self.restoration.on_restore_completed();
+                                // Auto-dismiss after 4 seconds.
+                                let rest = self.restoration.clone();
+                                glib::timeout_add_seconds_local(4, move || {
+                                    rest.dismiss();
+                                    glib::ControlFlow::Break
+                                });
+                            }
                         }
                         "Failed" => {
                             self.timeline.set_status("Failed", &message);
                             self.update_status_dot(0.8, 0.3, 0.3);
+                            if self.is_restoring.load(Ordering::Relaxed) {
+                                self.is_restoring.store(false, Ordering::Relaxed);
+                                self.restoration.on_restore_failed();
+                            }
                         }
                         "Cancelled" => {
                             self.timeline.set_status("Cancelled", &message);
                             self.update_status_dot(0.5, 0.5, 0.5);
+                            if self.is_restoring.load(Ordering::Relaxed) {
+                                self.is_restoring.store(false, Ordering::Relaxed);
+                                self.restoration.dismiss();
+                            }
                         }
                         "RollingBack" => {
                             self.timeline.set_status("RollingBack", &message);
@@ -614,6 +698,10 @@ impl EnaBar {
                         "RolledBack" => {
                             self.timeline.set_status("RolledBack", &message);
                             self.update_status_dot(0.5, 0.5, 0.5);
+                            if self.is_restoring.load(Ordering::Relaxed) {
+                                self.is_restoring.store(false, Ordering::Relaxed);
+                                self.restoration.dismiss();
+                            }
                         }
                         _ => {}
                     }
@@ -656,5 +744,28 @@ impl EnaBar {
             status_rev.set_reveal_child(false);
             glib::ControlFlow::Break
         });
+    }
+
+    /// Handle ambient suggestion events from enad.
+    fn handle_ambient_event(&self, kind: &str, payload: &Value) {
+        if kind != "System" {
+            return;
+        }
+        if let Some(suggestion) = parse_suggestion_event(payload) {
+            tracing::info!(
+                "Ambient suggestion: {} (priority={:.2})",
+                suggestion.title,
+                suggestion.priority
+            );
+            self.ambient.show(suggestion);
+        }
+    }
+
+    /// Poll the restoration widget's IPC response channel.
+    /// Also polls ambient widget auto-dismiss.
+    /// Must be called from the GTK main thread (idle handler).
+    pub fn poll_restoration(&self) {
+        self.restoration.poll();
+        self.ambient.poll_auto_dismiss();
     }
 }

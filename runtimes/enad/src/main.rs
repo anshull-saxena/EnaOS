@@ -4,7 +4,10 @@ mod hooks;
 mod memory;
 mod orchestration;
 mod process;
+mod restore;
 mod server;
+mod snapshot;
+mod suggestion;
 mod types;
 
 #[cfg(target_os = "linux")]
@@ -13,6 +16,7 @@ mod system;
 use std::sync::Arc;
 
 use clap::Parser;
+use tokio::sync::broadcast;
 use tracing::{error, info};
 
 /// EnaOS Core System Daemon.
@@ -67,9 +71,42 @@ async fn main() -> anyhow::Result<()> {
     };
     let memory_capture = memory::capture::MemoryCapture::new(memory_store.clone());
 
+    // ── Workspace Snapshot subsystem ──
+    let snapshot_path = format!("{}/ena-snapshots.db", std::env::temp_dir().display());
+    let snapshot_store = match snapshot::store::SnapshotStore::open(&snapshot_path) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            tracing::warn!("Snapshot store failed to open: {e} — snapshots disabled");
+            Arc::new(snapshot::store::SnapshotStore::open("/tmp/ena-snapshots.db").unwrap_or_else(|_| {
+                panic!("Cannot initialize snapshot store: {e}");
+            }))
+        }
+    };
+    let snapshot_capture = snapshot::capture::SnapshotCapture::new(
+        snapshot_store.clone(),
+        memory_store.clone(),
+        orchestration.clone(),
+    );
+
+    // ── Ambient suggestion subsystem ──
+    let suggestion_path = format!("{}/ena-suggestions.db", std::env::temp_dir().display());
+    let suggestion_store = match suggestion::store::SuggestionStore::open(&suggestion_path) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            tracing::warn!("Suggestion store failed to open: {e} — suggestions disabled");
+            Arc::new(suggestion::store::SuggestionStore::open("/tmp/ena-suggestions.db").unwrap_or_else(|_| {
+                panic!("Cannot initialize suggestion store: {e}");
+            }))
+        }
+    };
+    let suggestion_engine = Arc::new(suggestion::engine::SuggestionEngine::new(
+        suggestion_store.clone(),
+        bus.clone(),
+    ));
+
     // ── IPC server ──
     let server = server::IpcServer::bind(
-        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), orchestration.clone(),
+        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(),
     )?;
     let shutdown_handle = server.shutdown_handle();
 
@@ -177,6 +214,46 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
+    // ── Snapshot capture (auto-snapshot loop) ──
+    let snapshot_capture_handle = {
+        let sc = snapshot_capture;
+        let b = bus.clone();
+        tokio::spawn(async move {
+            sc.run(b).await;
+        })
+    };
+
+    // ── Ambient suggestion engine (event-driven) ──
+    // Subscribe to the event bus and feed events to the engine.
+    let suggestion_engine_clone = suggestion_engine.clone();
+    let suggestion_bus = bus.clone();
+    let suggestion_task = tokio::spawn(async move {
+        let mut rx = suggestion_bus.subscribe_all();
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    suggestion_engine_clone.on_event(&event);
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("Suggestion engine lagged by {n} events");
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Periodic cleanup of expired suggestions and dismissal records.
+    let suggestion_cleanup = suggestion_engine.clone();
+    let cleanup_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            suggestion_cleanup.cleanup();
+        }
+    });
+
     // ── Install system hooks ──
     let hooks_shutdown = system_hooks.wait_for_shutdown();
 
@@ -203,6 +280,9 @@ async fn main() -> anyhow::Result<()> {
         let _ = server_handle.await;
         let _ = process_reaper.await;
         memory_capture_handle.abort();
+        snapshot_capture_handle.abort();
+        suggestion_task.abort();
+        cleanup_task.abort();
 
         // Abort desktop integration tasks.
         if let Some(handles) = desktop_handles {
