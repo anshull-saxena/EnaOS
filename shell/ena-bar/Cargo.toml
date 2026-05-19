@@ -5,6 +5,9 @@ edition = "2024"
 description = "EnaOS native AI bar — GTK4 layer-shell panel"
 authors = ["EnaOS"]
 
+[features]
+timing = []
+
 [dependencies]
 gtk4 = { version = "0.11", package = "gtk4", features = ["v4_22"] }
 serde = { version = "1", features = ["derive"] }

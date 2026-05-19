@@ -14,6 +14,7 @@ use crate::snapshot::store::SnapshotStore;
 use crate::restore::plan::RestorePlanner;
 use crate::restore::types::{RestoreSelections, RestoreResult};
 use crate::suggestion::engine::SuggestionEngine;
+use crate::context::ContextEngine;
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -25,6 +26,7 @@ pub struct IpcServer {
     snapshot_store: Arc<SnapshotStore>,
     orchestration: Arc<OrchestrationEngine>,
     suggestion_engine: Arc<SuggestionEngine>,
+    context_engine: Arc<ContextEngine>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -38,6 +40,7 @@ impl IpcServer {
         snapshot_store: Arc<SnapshotStore>,
         orchestration: Arc<OrchestrationEngine>,
         suggestion_engine: Arc<SuggestionEngine>,
+        context_engine: Arc<ContextEngine>,
     ) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
@@ -54,6 +57,7 @@ impl IpcServer {
             snapshot_store,
             orchestration,
             suggestion_engine,
+            context_engine,
             shutdown_tx,
         })
     }
@@ -73,9 +77,10 @@ impl IpcServer {
                             let snapshots = self.snapshot_store.clone();
                             let orch = self.orchestration.clone();
                             let suggestion = self.suggestion_engine.clone();
+                            let context = self.context_engine.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, executor, memory, snapshots, orch, suggestion, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, memory, snapshots, orch, suggestion, context, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
@@ -109,6 +114,7 @@ async fn handle_connection(
     snapshots: Arc<SnapshotStore>,
     orchestration: Arc<OrchestrationEngine>,
     suggestion: Arc<SuggestionEngine>,
+    context: Arc<ContextEngine>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -136,7 +142,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus, &executor, &memory, &snapshots, &orchestration, &suggestion).await;
+                                let response = dispatch(msg, &bus, &executor, &memory, &snapshots, &orchestration, &suggestion, &context).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -202,12 +208,13 @@ async fn dispatch(
     snapshots: &SnapshotStore,
     orchestration: &OrchestrationEngine,
     suggestion: &SuggestionEngine,
+    context: &ContextEngine,
 ) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion).await;
+            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion, context).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
@@ -243,6 +250,7 @@ async fn handle_command(
     snapshots: &SnapshotStore,
     orchestration: &OrchestrationEngine,
     suggestion: &SuggestionEngine,
+    context: &ContextEngine,
 ) -> Response {
     match cmd {
         Command::Execute { command, args } => {
@@ -617,6 +625,19 @@ async fn handle_command(
         }
         Command::DismissSuggestion { suggestion_id, permanent } => {
             suggestion.dismiss_suggestion(&suggestion_id, permanent.unwrap_or(false))
+        }
+
+        // ── Contextual Command Intelligence ──
+        Command::GetContextCommands { query, limit } => {
+            let limit = limit.unwrap_or(6) as usize;
+            let suggestions = context.resolve(&query);
+            let suggestions: Vec<_> = suggestions.into_iter().take(limit).collect();
+            Response::Data {
+                payload: serde_json::json!({
+                    "commands": suggestions,
+                    "context": context.context_snapshot(),
+                }),
+            }
         }
     }
 }

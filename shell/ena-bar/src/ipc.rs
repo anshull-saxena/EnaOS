@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::command_palette::CommandSuggestion;
+
 // ── IPC Protocol (matches enad's types/ipc.rs) ───────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +231,55 @@ pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Va
     reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
 
     serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))
+}
+
+/// Fetch context-aware command suggestions from enad.
+///
+/// Opens a fresh Unix socket, sends GetContextCommands,
+/// parses the response payload into a Vec<CommandSuggestion>.
+pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Result<Vec<CommandSuggestion>, String> {
+    let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
+
+    let mut writer = stream.try_clone().map_err(|e| format!("clone: {e}"))?;
+    let mut reader = BufReader::new(stream);
+
+    let msg = json!({
+        "id": Uuid::new_v4(),
+        "type": "Command",
+        "body": {
+            "GetContextCommands": {
+                "query": query,
+                "limit": limit
+            }
+        }
+    });
+
+    let json = serde_json::to_string(&msg).map_err(|e| format!("serialize: {e}"))?;
+    writeln!(writer, "{json}").map_err(|e| format!("write: {e}"))?;
+    writer.flush().map_err(|e| format!("flush: {e}"))?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+
+    let response: Value = serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))?;
+
+    // Extract suggestions from response payload.
+    if let Some(body) = response.get("body") {
+        if let Some(payload) = body.get("payload") {
+            if let Some(suggestions) = payload.as_array() {
+                let parsed: Result<Vec<CommandSuggestion>, _> = suggestions
+                    .iter()
+                    .map(|s| serde_json::from_value(s.clone()))
+                    .collect();
+                return parsed.map_err(|e| format!("parse_suggestions: {e}"));
+            }
+        }
+    }
+
+    Ok(Vec::new())
 }
 
 fn parse_event(json: Value) -> EnadEvent {

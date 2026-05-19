@@ -122,6 +122,13 @@ pub enum Command {
         suggestion_id: Uuid,
         permanent: Option<bool>,
     },
+
+    // ── Contextual Command Intelligence ──
+    /// Get context-aware command suggestions.
+    GetContextCommands {
+        query: String,
+        limit: Option<u32>,
+    },
 }
 
 /// What state to query.

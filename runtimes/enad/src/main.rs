@@ -7,6 +7,7 @@ mod process;
 mod restore;
 mod server;
 mod snapshot;
+mod context;
 mod suggestion;
 mod types;
 
@@ -104,9 +105,12 @@ async fn main() -> anyhow::Result<()> {
         bus.clone(),
     ));
 
+    // ── Contextual Command Intelligence ──
+    let context_engine = Arc::new(context::ContextEngine::new());
+
     // ── IPC server ──
     let server = server::IpcServer::bind(
-        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(),
+        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(), context_engine.clone(),
     )?;
     let shutdown_handle = server.shutdown_handle();
 
@@ -244,6 +248,84 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Context engine event subscription — feeds events to the aggregator.
+    let context_clone = context_engine.clone();
+    let context_bus = bus.clone();
+    let context_event_task = tokio::spawn(async move {
+        let mut rx = context_bus.subscribe_all();
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let kind = serde_json::to_value(&event.kind).ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                    let payload = serde_json::to_value(&event.payload).unwrap_or_default();
+                    context_clone.on_event(&kind, &payload);
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("Context engine lagged by {n} events");
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Periodic context refresh — pulls deep state from stores.
+    let context_refresh = context_engine.clone();
+    let ctx_mem = memory_store.clone();
+    let ctx_orch = orchestration.clone();
+    let ctx_snaps = snapshot_store.clone();
+    let context_refresh_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+
+            // Pull recent intents from memory.
+            let intents_q = crate::memory::types::MemoryQuery::intents();
+            let recent_intents: Vec<String> = ctx_mem.query(&intents_q)
+                .ok()
+                .map(|entries| entries.iter().map(|e| e.summary.clone()).take(10).collect())
+                .unwrap_or_default();
+
+            let actions_q = crate::memory::types::MemoryQuery::actions();
+            let recent_actions: Vec<String> = ctx_mem.query(&actions_q)
+                .ok()
+                .map(|entries| entries.iter().map(|e| e.summary.clone()).take(5).collect())
+                .unwrap_or_default();
+
+            // Pull active plans.
+            let plans = ctx_orch.list_plans().await;
+            use crate::orchestration::types::PlanStatus;
+            let active_plans: Vec<crate::context::aggregator::ActivePlan> = plans
+                .into_iter()
+                .filter(|p| matches!(p.status, PlanStatus::PendingApproval | PlanStatus::Running))
+                .map(|p| crate::context::aggregator::ActivePlan {
+                    id: p.id.to_string(),
+                    title: p.title.clone(),
+                    status: format!("{:?}", p.status),
+                })
+                .take(5)
+                .collect();
+
+            // Pull recent snapshots.
+            let recent_snapshots: Vec<crate::context::aggregator::RecentSnapshot> = ctx_snaps.list(5)
+                .ok()
+                .map(|snaps| snaps.into_iter().map(|s| crate::context::aggregator::RecentSnapshot {
+                    id: s.snapshot_id.to_string(),
+                    label: s.label.clone(),
+                    taken_at: s.created_at.to_rfc3339(),
+                }).collect())
+                .unwrap_or_default();
+
+            context_refresh.refresh(
+                recent_intents,
+                recent_actions,
+                active_plans,
+                recent_snapshots,
+            );
+        }
+    });
+
     // Periodic cleanup of expired suggestions and dismissal records.
     let suggestion_cleanup = suggestion_engine.clone();
     let cleanup_task = tokio::spawn(async move {
@@ -283,6 +365,8 @@ async fn main() -> anyhow::Result<()> {
         snapshot_capture_handle.abort();
         suggestion_task.abort();
         cleanup_task.abort();
+        context_event_task.abort();
+        context_refresh_task.abort();
 
         // Abort desktop integration tasks.
         if let Some(handles) = desktop_handles {

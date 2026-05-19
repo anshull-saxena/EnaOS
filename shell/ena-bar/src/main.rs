@@ -10,10 +10,12 @@ use tracing_subscriber::EnvFilter;
 mod ambient_ui;
 mod audio;
 mod bar;
+mod command_palette;
 mod config;
 mod ipc;
 mod orchestration_ui;
 mod restoration_ui;
+mod timing;
 
 /// Load embedded CSS stylesheet.
 fn load_style() {
@@ -79,6 +81,11 @@ fn main() -> glib::ExitCode {
         let bar_for_keys = ena_bar.clone();
         let ctrl = EventControllerKey::new();
         ctrl.connect_key_pressed(move |_ctrl, keyval, _code, _state| {
+            // Route to command palette first if visible.
+            if bar_for_keys.handle_palette_key(keyval) {
+                return glib::Propagation::Stop;
+            }
+
             match keyval {
                 gdk::Key::Escape => {
                     tracing::info!("Escape: dismiss bar");

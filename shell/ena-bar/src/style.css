@@ -404,3 +404,67 @@ drawingarea {
     background: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.5);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Command Palette — keyboard-first contextual commands
+   ══════════════════════════════════════════════════════════════ */
+
+.ena-palette-container {
+    background: transparent;
+    margin: 0 8px;
+}
+
+.ena-palette-list {
+    background: rgba(18, 18, 18, 0.97);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 5px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.ena-palette-row {
+    background: transparent;
+    border-radius: 7px;
+    padding: 7px 10px;
+    transition: background 80ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ena-palette-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ena-palette-row-selected {
+    background: rgba(212, 175, 55, 0.10);
+    transition: background 60ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ena-palette-icon {
+    color: rgba(255, 255, 255, 0.40);
+    font-size: 12px;
+    min-width: 20px;
+}
+
+.ena-palette-label {
+    color: rgba(255, 255, 255, 0.85);
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 450;
+    letter-spacing: 0.01em;
+}
+
+.ena-palette-subtitle {
+    color: rgba(255, 255, 255, 0.30);
+    font-family: "SF Mono", "Cascadia Code", monospace;
+    font-size: 11px;
+    font-weight: 400;
+    min-width: 80px;
+    letter-spacing: 0.02em;
+}
+
+.ena-palette-preview {
+    color: rgba(212, 175, 55, 0.55);
+    font-family: "SF Mono", "Cascadia Code", monospace;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+}

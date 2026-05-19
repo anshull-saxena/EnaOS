@@ -1,11 +1,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use gtk4::prelude::*;
+use gtk4::gdk;
 use gtk4::glib;
 use serde_json::Value;
 
 use crate::ambient_ui::{AmbientSuggestionWidget, parse_suggestion_event};
+use crate::command_palette::CommandPalette;
 use crate::ipc::EnadEvent;
 use crate::orchestration_ui::{TimelineWidget, OrchestrationDisplay, parse_plan_event, parse_node_event};
 use crate::restoration_ui::RestorationWidget;
@@ -70,6 +73,9 @@ pub struct EnaBar {
 
     // Ambient suggestion widget.
     ambient: Arc<AmbientSuggestionWidget>,
+
+    // Contextual command palette.
+    command_palette: Arc<CommandPalette>,
 
     // Whether we triggered a restore and are waiting for it.
     is_restoring: AtomicBool,
@@ -204,6 +210,9 @@ impl EnaBar {
         // ── Ambient suggestion widget ───────────────────────────
         let ambient = AmbientSuggestionWidget::new();
 
+        // ── Contextual command palette ──────────────────────────
+        let command_palette = CommandPalette::new();
+
         // ── Main bar row ────────────────────────────────────────
         let bar_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -227,6 +236,7 @@ impl EnaBar {
             .build();
         container.append(&result_revealer);
         container.append(&bar_row);
+        container.append(&command_palette.container);
         container.append(&restoration.container);
         container.append(&ambient.container);
         container.append(&timeline.container);
@@ -252,8 +262,40 @@ impl EnaBar {
             timeline,
             restoration,
             ambient,
+            command_palette: Arc::new(command_palette),
             is_restoring: AtomicBool::new(false),
             context: std::sync::Mutex::new(SystemContext::default()),
+        });
+
+        // Wire palette selection → action execution.
+        let exec_socket = socket_path.to_string();
+        bar.command_palette.set_on_select(move |suggestion| {
+            tracing::info!(
+                "Command palette selected: {} (action={}, score={:.2})",
+                suggestion.label,
+                suggestion.action,
+                suggestion.score
+            );
+            let socket = exec_socket.clone();
+            let action = suggestion.action.clone();
+            let params = suggestion.action_params.clone();
+            let label = suggestion.label.clone();
+            std::thread::spawn(move || {
+                let _ = crate::ipc::send_command(
+                    &socket,
+                    "ExecuteAction",
+                    &serde_json::json!({
+                        "action": action,
+                        "params": params,
+                    }),
+                );
+                let label_clone = label.clone();
+                let _ = glib::idle_add_local(move || {
+                    // Signal via event channel instead of direct bar access.
+                    tracing::info!("Palette action executed: {label_clone}");
+                    glib::ControlFlow::Break
+                });
+            });
         });
 
         // Wire up input entry activation (Enter key)
@@ -264,6 +306,93 @@ impl EnaBar {
                 b.set_state(BarState::Thinking);
                 tracing::info!("Command submitted: {text}");
             }
+        });
+
+        // Wire up input entry text changes → debounced async context commands.
+        //
+        // Architecture:
+        // - 40ms debounce (instant feel, prevents per-keystroke IPC spam)
+        // - IPC runs on background thread (zero GTK main thread blocking)
+        // - Query generation counter prevents stale responses overwriting newer results
+        // - Channel-based result delivery (avoids Send/Sync issues with GTK widgets)
+        // - Timing instrumentation in verbose mode
+        let cp_socket = socket_path.to_string();
+        let cp_palette = bar.command_palette.clone();
+        let debounce_id: std::rc::Rc<std::cell::RefCell<Option<glib::SourceId>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let query_generation: std::rc::Rc<std::cell::Cell<u64>> =
+            std::rc::Rc::new(std::cell::Cell::new(0));
+        let (palette_tx, palette_rx) = mpsc::channel::<(u64, Result<Vec<crate::command_palette::CommandSuggestion>, String>)>();
+
+        // Poll palette results channel on GTK main loop.
+        let poll_palette = cp_palette.clone();
+        let poll_gen = query_generation.clone();
+        glib::idle_add_local(move || {
+            while let Ok((qgen, result)) = palette_rx.try_recv() {
+                // Stale response check.
+                if poll_gen.get() != qgen {
+                    continue;
+                }
+                match result {
+                    Ok(suggestions) => {
+                        poll_palette.update_suggestions(suggestions);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Context commands fetch failed: {e}");
+                        poll_palette.dismiss();
+                    }
+                }
+                crate::timing::mark_render_end();
+            }
+            glib::ControlFlow::Continue
+        });
+
+        bar.input_entry.connect_changed(move |entry| {
+            let text = entry.text().to_string();
+            let socket = cp_socket.clone();
+            let debounce_id = debounce_id.clone();
+            let query_generation = query_generation.clone();
+            let tx = palette_tx.clone();
+
+            crate::timing::start_query(&text);
+
+            // Cancel previous debounce timer.
+            if let Some(id) = debounce_id.borrow_mut().take() {
+                id.remove();
+            }
+
+            // Bump generation counter for this query.
+            let this_generation = query_generation.get() + 1;
+            query_generation.set(this_generation);
+
+            // Debounce: 40ms after last keystroke before fetching.
+            let new_id = glib::timeout_add_local_once(std::time::Duration::from_millis(40), move || {
+                let trimmed = text.trim();
+                if trimmed.len() < 2 {
+                    return;
+                }
+
+                crate::timing::mark_debounce_end();
+
+                // Spawn background thread for IPC — zero GTK main thread blocking.
+                // Only Send-safe data moves into the thread.
+                let socket_bg = socket.clone();
+                let query_bg = trimmed.to_string();
+                let qgen_bg = this_generation;
+                let tx_bg = tx.clone();
+
+                crate::timing::mark_ipc_start();
+
+                std::thread::spawn(move || {
+                    let result = crate::ipc::get_context_commands(&socket_bg, &query_bg, 6);
+
+                    crate::timing::mark_ipc_end();
+
+                    // Send result back to main thread via channel.
+                    let _ = tx_bg.send((qgen_bg, result));
+                });
+            });
+            *debounce_id.borrow_mut() = Some(new_id);
         });
 
         // Wire up mic button
@@ -767,5 +896,11 @@ impl EnaBar {
     pub fn poll_restoration(&self) {
         self.restoration.poll();
         self.ambient.poll_auto_dismiss();
+    }
+
+    /// Handle keyboard events for the command palette.
+    /// Returns true if the event was consumed by the palette.
+    pub fn handle_palette_key(&self, keyval: gdk::Key) -> bool {
+        self.command_palette.handle_key(keyval)
     }
 }
