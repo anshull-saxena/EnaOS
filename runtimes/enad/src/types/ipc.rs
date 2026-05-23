@@ -129,6 +129,14 @@ pub enum Command {
         query: String,
         limit: Option<u32>,
     },
+
+    // ── First-Run / Onboarding commands ──
+    /// Get first-run status (fresh install, onboarding completed, etc.).
+    GetFirstRunStatus,
+    /// Mark onboarding as completed (welcome overlay dismissed).
+    CompleteOnboarding,
+    /// Get demo data for fresh installs.
+    GetDemoData,
 }
 
 /// What state to query.

@@ -1,5 +1,6 @@
 mod actions;
 mod bus;
+mod first_run;
 mod hooks;
 mod memory;
 mod orchestration;
@@ -108,9 +109,23 @@ async fn main() -> anyhow::Result<()> {
     // ── Contextual Command Intelligence ──
     let context_engine = Arc::new(context::ContextEngine::new());
 
+    // ── First-run manager + demo seeding ──
+    let mem_path = std::env::temp_dir().join("ena-memory.db").exists();
+    let snap_path = std::env::temp_dir().join("ena-snapshots.db").exists();
+    let has_existing_db = mem_path || snap_path;
+    let data_dir = std::env::temp_dir().to_string_lossy().to_string();
+    let first_run_manager = Arc::new(first_run::FirstRunManager::new(&data_dir, has_existing_db));
+
+    if first_run_manager.is_first_launch() {
+        info!("Seeding demo data for first launch");
+        // Demo snapshot is served on-demand via GetDemoData IPC command,
+        // not persisted to the real snapshot store.
+        first_run_manager.mark_demo_seeded();
+    }
+
     // ── IPC server ──
     let server = server::IpcServer::bind(
-        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(), context_engine.clone(),
+        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(), context_engine.clone(), first_run_manager.clone(),
     )?;
     let shutdown_handle = server.shutdown_handle();
 

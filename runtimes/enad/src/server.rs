@@ -15,6 +15,7 @@ use crate::restore::plan::RestorePlanner;
 use crate::restore::types::{RestoreSelections, RestoreResult};
 use crate::suggestion::engine::SuggestionEngine;
 use crate::context::ContextEngine;
+use crate::first_run::{self, FirstRunManager, create_demo_snapshot, create_demo_orchestration_plan};
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -27,6 +28,7 @@ pub struct IpcServer {
     orchestration: Arc<OrchestrationEngine>,
     suggestion_engine: Arc<SuggestionEngine>,
     context_engine: Arc<ContextEngine>,
+    first_run_manager: Arc<FirstRunManager>,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -41,6 +43,7 @@ impl IpcServer {
         orchestration: Arc<OrchestrationEngine>,
         suggestion_engine: Arc<SuggestionEngine>,
         context_engine: Arc<ContextEngine>,
+        first_run_manager: Arc<FirstRunManager>,
     ) -> std::io::Result<Self> {
         let _ = std::fs::remove_file(path);
 
@@ -58,6 +61,7 @@ impl IpcServer {
             orchestration,
             suggestion_engine,
             context_engine,
+            first_run_manager,
             shutdown_tx,
         })
     }
@@ -78,9 +82,10 @@ impl IpcServer {
                             let orch = self.orchestration.clone();
                             let suggestion = self.suggestion_engine.clone();
                             let context = self.context_engine.clone();
+                            let first_run = self.first_run_manager.clone();
                             let shutdown_rx = self.shutdown_tx.subscribe();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, bus, executor, memory, snapshots, orch, suggestion, context, shutdown_rx).await {
+                                if let Err(e) = handle_connection(stream, bus, executor, memory, snapshots, orch, suggestion, context, first_run, shutdown_rx).await {
                                     warn!("Connection handler error: {e}");
                                 }
                             });
@@ -115,6 +120,7 @@ async fn handle_connection(
     orchestration: Arc<OrchestrationEngine>,
     suggestion: Arc<SuggestionEngine>,
     context: Arc<ContextEngine>,
+    first_run: Arc<FirstRunManager>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -142,7 +148,7 @@ async fn handle_connection(
 
                         match serde_json::from_str::<IpcMessage>(trimmed) {
                             Ok(msg) => {
-                                let response = dispatch(msg, &bus, &executor, &memory, &snapshots, &orchestration, &suggestion, &context).await;
+                                let response = dispatch(msg, &bus, &executor, &memory, &snapshots, &orchestration, &suggestion, &context, &first_run).await;
                                 let response_json = serde_json::to_string(&response)?;
                                 writer.write_all(response_json.as_bytes()).await?;
                                 writer.write_all(b"\n").await?;
@@ -209,12 +215,13 @@ async fn dispatch(
     orchestration: &OrchestrationEngine,
     suggestion: &SuggestionEngine,
     context: &ContextEngine,
+    first_run: &FirstRunManager,
 ) -> IpcMessage {
     let id = msg.id;
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion, context).await;
+            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion, context, first_run).await;
             IpcMessage::response(id, response)
         }
         MessageKind::Subscribe(sub) => {
@@ -251,6 +258,7 @@ async fn handle_command(
     orchestration: &OrchestrationEngine,
     suggestion: &SuggestionEngine,
     context: &ContextEngine,
+    first_run: &FirstRunManager,
 ) -> Response {
     match cmd {
         Command::Execute { command, args } => {
@@ -625,6 +633,35 @@ async fn handle_command(
         }
         Command::DismissSuggestion { suggestion_id, permanent } => {
             suggestion.dismiss_suggestion(&suggestion_id, permanent.unwrap_or(false))
+        }
+
+        // ── First-Run / Onboarding commands ──
+        Command::GetFirstRunStatus => {
+            let status = first_run.get_status();
+            Response::Data {
+                payload: serde_json::to_value(&status).unwrap_or(serde_json::json!({})),
+            }
+        }
+        Command::CompleteOnboarding => {
+            first_run.complete_onboarding();
+            Response::Ok {
+                message: Some("Onboarding completed".into()),
+            }
+        }
+        Command::GetDemoData => {
+            let snapshot = create_demo_snapshot();
+            let (plan_id, nodes) = create_demo_orchestration_plan();
+            Response::Data {
+                payload: serde_json::json!({
+                    "demo": true,
+                    "snapshot": snapshot,
+                    "orchestration_plan": {
+                        "plan_id": plan_id,
+                        "title": "First-run demo",
+                        "nodes": nodes,
+                    },
+                }),
+            }
         }
 
         // ── Contextual Command Intelligence ──

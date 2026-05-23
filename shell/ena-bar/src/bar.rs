@@ -12,6 +12,7 @@ use crate::command_palette::CommandPalette;
 use crate::ipc::EnadEvent;
 use crate::orchestration_ui::{TimelineWidget, OrchestrationDisplay, parse_plan_event, parse_node_event};
 use crate::restoration_ui::RestorationWidget;
+use crate::welcome_overlay::WelcomeOverlay;
 
 /// Internal state of the Ena Bar.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,8 +78,15 @@ pub struct EnaBar {
     // Contextual command palette.
     command_palette: Arc<CommandPalette>,
 
+    // Welcome overlay for first-run onboarding.
+    welcome_overlay: Arc<WelcomeOverlay>,
+
     // Whether we triggered a restore and are waiting for it.
     is_restoring: AtomicBool,
+    // Whether first-run status has been checked this session.
+    first_run_checked: AtomicBool,
+    // Socket path for IPC commands.
+    socket_path: String,
 
     // Internal context tracker.
     context: std::sync::Mutex<SystemContext>,
@@ -213,6 +221,9 @@ impl EnaBar {
         // ── Contextual command palette ──────────────────────────
         let command_palette = CommandPalette::new();
 
+        // ── Welcome overlay (first-run onboarding) ──────────────
+        let welcome_overlay = Arc::new(WelcomeOverlay::new());
+
         // ── Main bar row ────────────────────────────────────────
         let bar_row = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Horizontal)
@@ -235,6 +246,7 @@ impl EnaBar {
             .css_classes(["ena-bar-container"])
             .build();
         container.append(&result_revealer);
+        container.append(&welcome_overlay.container);
         container.append(&bar_row);
         container.append(&command_palette.container);
         container.append(&restoration.container);
@@ -263,7 +275,10 @@ impl EnaBar {
             restoration,
             ambient,
             command_palette: Arc::new(command_palette),
+            welcome_overlay,
             is_restoring: AtomicBool::new(false),
+            first_run_checked: AtomicBool::new(false),
+            socket_path: socket_path.to_string(),
             context: std::sync::Mutex::new(SystemContext::default()),
         });
 
@@ -394,6 +409,42 @@ impl EnaBar {
             });
             *debounce_id.borrow_mut() = Some(new_id);
         });
+
+        // ── Wire welcome overlay chip buttons directly ────────
+        // Each chip click: dismiss overlay, fill input + set thinking
+        // on GTK main thread (click handler runs on main thread),
+        // then send IPC calls in a bg thread with Send-safe data only.
+        let wo_socket = socket_path.to_string();
+        let wo_input = bar.input_entry.clone();
+        let wo_bar = bar.clone();
+        for (i, btn) in bar.welcome_overlay.chip_buttons.iter().enumerate() {
+            let cmd = bar.welcome_overlay.chip_commands[i].clone();
+            let s = wo_socket.clone();
+            let input = wo_input.clone();
+            let enabar = wo_bar.clone();
+            btn.connect_clicked(move |_| {
+                // Dismiss overlay (on GTK main thread).
+                enabar.dismiss_welcome();
+                // Fill input + show thinking state (GTK main thread).
+                input.set_text(&cmd);
+                enabar.set_state(BarState::Thinking);
+                // IPC calls in bg thread — only Send-safe Strings.
+                let sock = s.clone();
+                let cmd_str = cmd.clone();
+                std::thread::spawn(move || {
+                    let _ = crate::ipc::send_command(
+                        &sock,
+                        "CompleteOnboarding",
+                        &serde_json::json!({}),
+                    );
+                    let _ = crate::ipc::send_command(
+                        &sock,
+                        "ExecuteAction",
+                        &serde_json::json!({"action": cmd_str, "params": {}}),
+                    );
+                });
+            });
+        }
 
         // Wire up mic button
         let b = bar.clone();
@@ -552,6 +603,10 @@ impl EnaBar {
                 self.set_state(BarState::Expanded);
                 // Check for recent snapshots to suggest restoration.
                 self.restoration.check_for_snapshots();
+                // Check first-run status (async IPC to enad) — only once per session.
+                if !self.first_run_checked.swap(true, Ordering::Relaxed) {
+                    self.check_first_run();
+                }
             }
             EnadEvent::Disconnected => {
                 self.status_label
@@ -896,6 +951,88 @@ impl EnaBar {
     pub fn poll_restoration(&self) {
         self.restoration.poll();
         self.ambient.poll_auto_dismiss();
+    }
+
+    /// Check first-run status from enad and show welcome overlay if needed.
+    ///
+    /// Uses a channel to pass the IPC result back to the GTK main thread,
+    /// avoiding any Send/Sync issues with GTK widget types.
+    /// Retries up to 30 times (3 seconds total) to handle startup delays.
+    pub fn check_first_run(&self) {
+        let socket = self.socket_path.clone();
+        let wo = self.welcome_overlay.clone();
+
+        // Channel: thread-safe bool transfer.
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        // IPC in background thread — only Send-safe Strings.
+        std::thread::spawn(move || {
+            let result = crate::ipc::send_unit_command(&socket, "GetFirstRunStatus");
+            let should_show = match result {
+                Ok(response) => {
+                    let is_first = response
+                        .pointer("/body/Data/payload/is_first_launch")
+                        .or_else(|| response.pointer("/body/payload/is_first_launch"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let onboarding_done = response
+                        .pointer("/body/Data/payload/onboarding_completed")
+                        .or_else(|| response.pointer("/body/payload/onboarding_completed"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    is_first && !onboarding_done
+                }
+                Err(e) => {
+                    tracing::info!("First-run check deferred (enad not ready): {e}");
+                    false
+                }
+            };
+            let _ = tx.send(should_show);
+        });
+
+        // Poll result on GTK main thread with retries.
+        // Checks every 100ms, up to 30 times (3s window).
+        // Unix socket IPC is typically <5ms, so this is generous.
+        use std::cell::Cell;
+        let retries = Cell::new(0);
+        glib::timeout_add_local(
+            std::time::Duration::from_millis(100),
+            move || {
+                retries.set(retries.get() + 1);
+                if retries.get() > 30 {
+                    tracing::info!("First-run check exhausted (3s timeout)");
+                    return glib::ControlFlow::Break;
+                }
+                match rx.try_recv() {
+                    Ok(true) => {
+                        wo.show();
+                        glib::ControlFlow::Break
+                    }
+                    Ok(false) => {
+                        tracing::info!("Not first launch — onboarding skipped");
+                        glib::ControlFlow::Break
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        // Not ready yet, retry.
+                        glib::ControlFlow::Continue
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // Sender dropped (IPC thread panicked or closed).
+                        glib::ControlFlow::Break
+                    }
+                }
+            },
+        );
+    }
+
+    /// Access the welcome overlay for external dismissal.
+    pub fn dismiss_welcome(&self) {
+        self.welcome_overlay.dismiss();
+    }
+
+    /// Check if welcome overlay is showing.
+    pub fn is_welcome_showing(&self) -> bool {
+        self.welcome_overlay.is_showing()
     }
 
     /// Handle keyboard events for the command palette.

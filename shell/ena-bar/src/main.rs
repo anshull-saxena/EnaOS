@@ -17,6 +17,9 @@ mod orchestration_ui;
 mod restoration_ui;
 mod timing;
 
+// ── First-run welcome overlay module ─────────────────────────
+mod welcome_overlay;
+
 /// Load embedded CSS stylesheet.
 fn load_style() {
     let provider = gtk4::CssProvider::new();
@@ -89,6 +92,10 @@ fn main() -> glib::ExitCode {
             match keyval {
                 gdk::Key::Escape => {
                     tracing::info!("Escape: dismiss bar");
+                    // Dismiss welcome overlay first if showing.
+                    if bar_for_keys.is_welcome_showing() {
+                        bar_for_keys.dismiss_welcome();
+                    }
                     bar_for_keys.set_state(bar::BarState::Collapsed);
                     glib::Propagation::Stop
                 }

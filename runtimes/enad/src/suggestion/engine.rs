@@ -31,6 +31,8 @@ pub struct SuggestionEngine {
     recent_events: std::sync::Mutex<Vec<ContextEvent>>,
     /// Last suggestion time per kind (for rate limiting).
     last_suggestion_time: std::sync::Mutex<std::collections::HashMap<String, DateTime<Utc>>>,
+    /// Whether onboarding suggestions have been generated this session.
+    onboarding_generated: std::sync::Mutex<bool>,
 }
 
 impl SuggestionEngine {
@@ -40,6 +42,7 @@ impl SuggestionEngine {
             bus,
             recent_events: std::sync::Mutex::new(Vec::with_capacity(64)),
             last_suggestion_time: std::sync::Mutex::new(std::collections::HashMap::new()),
+            onboarding_generated: std::sync::Mutex::new(false),
         }
     }
 
@@ -73,6 +76,14 @@ impl SuggestionEngine {
             }
             EventPayload::SystemActive => {
                 self.maybe_generate("system_active");
+
+                // Generate onboarding suggestions on first SystemActive event.
+                let mut og = self.onboarding_generated.lock().unwrap();
+                if !*og {
+                    *og = true;
+                    drop(og);
+                    self.generate_onboarding_suggestions();
+                }
             }
             _ => {}
         }
@@ -142,6 +153,78 @@ impl SuggestionEngine {
     }
 
     /// Build suggestions from the current context window using deterministic rules.
+    /// Generate onboarding suggestions for first-time users.
+    fn generate_onboarding_suggestions(&self) {
+        let now = Utc::now();
+        let onboarding_suggestions = vec![
+            Suggestion {
+                id: Uuid::new_v4(),
+                kind: SuggestionKind::ContextHint,
+                title: "Try: ask me anything".to_string(),
+                description: "Type a command in the bar \u{2014} I can open apps, check status, and more.".to_string(),
+                context_hash: "onboarding:intro".to_string(),
+                priority: 0.72,
+                created_at: now,
+                expires_at: now + Duration::minutes(30),
+                action: None,
+            },
+            Suggestion {
+                id: Uuid::new_v4(),
+                kind: SuggestionKind::ContextHint,
+                title: "Workspaces are remembered".to_string(),
+                description: "EnaOS remembers your workspace state. Try \u{2018}create a snapshot\u{2019} to save your current setup.".to_string(),
+                context_hash: "onboarding:snapshot".to_string(),
+                priority: 0.65,
+                created_at: now,
+                expires_at: now + Duration::minutes(30),
+                action: Some(SuggestionAction {
+                    label: "Try it".to_string(),
+                    action_type: "take_snapshot".to_string(),
+                    payload: serde_json::json!({"label": "My first snapshot"}),
+                }),
+            },
+            Suggestion {
+                id: Uuid::new_v4(),
+                kind: SuggestionKind::TimeBased,
+                title: "Press Escape to dismiss".to_string(),
+                description: "The bar stays handy. Press Escape to collapse, type to ask.".to_string(),
+                context_hash: "onboarding:escape".to_string(),
+                priority: 0.58,
+                created_at: now,
+                expires_at: now + Duration::minutes(15),
+                action: None,
+            },
+        ];
+
+        let count = onboarding_suggestions.len();
+        for s in onboarding_suggestions {
+            if let Err(e) = self.store.insert(&s) {
+                warn!("Failed to store onboarding suggestion: {e}");
+                continue;
+            }
+            let event = SystemEvent::new(
+                "enad",
+                EventKind::System,
+                EventPayload::SuggestionGenerated {
+                    suggestion_id: s.id,
+                    kind: s.kind.as_str().to_string(),
+                    title: s.title.clone(),
+                    description: s.description.clone(),
+                    priority: s.priority,
+                    action_label: s.action.as_ref().map(|a| a.label.clone()),
+                    action_type: s.action.as_ref().map(|a| a.action_type.clone()),
+                    action_payload: s
+                        .action
+                        .as_ref()
+                        .map(|a| a.payload.clone())
+                        .unwrap_or(Value::Null),
+                },
+            );
+            self.bus.publish(event);
+        }
+        info!("Generated {} onboarding suggestions", count);
+    }
+
     fn generate_suggestions(&self) -> Vec<Suggestion> {
         let context = self.build_context_window();
         let mut suggestions = Vec::new();

@@ -205,6 +205,14 @@ fn send_ping(writer: &mut UnixStream) {
 /// reads one response line, and returns the parsed JSON.
 /// This is a blocking call — use from a background thread or
 /// keep the response fast (Unix socket latency is sub-ms).
+/// Send a unit-variant command to enad (e.g. GetFirstRunStatus, CompleteOnboarding).
+pub fn send_unit_command(socket_path: &str, command: &str) -> Result<Value, String> {
+    // Unit variants serialize as {"VariantName": null} with external tagging.
+    let body = json!({ command: null });
+    send_command(socket_path, command, &body)
+}
+
+/// Send a command to enad with an object body.
 pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Value, String> {
     let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
     // Set a read timeout so we don't block forever.
