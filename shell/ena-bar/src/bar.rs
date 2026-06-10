@@ -970,14 +970,13 @@ impl EnaBar {
             let result = crate::ipc::send_unit_command(&socket, "GetFirstRunStatus");
             let should_show = match result {
                 Ok(response) => {
+                    // Response envelope: {"id": "...", "kind": {"type": "Response", "body": {"Data": {"payload": {...}}}}}
                     let is_first = response
-                        .pointer("/body/Data/payload/is_first_launch")
-                        .or_else(|| response.pointer("/body/payload/is_first_launch"))
+                        .pointer("/kind/body/Data/payload/is_first_launch")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
                     let onboarding_done = response
-                        .pointer("/body/Data/payload/onboarding_completed")
-                        .or_else(|| response.pointer("/body/payload/onboarding_completed"))
+                        .pointer("/kind/body/Data/payload/onboarding_completed")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     is_first && !onboarding_done

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 /// Top-level event on the enad event bus.
@@ -239,5 +239,311 @@ impl SystemEvent {
             kind,
             payload,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip_event_kind(kind: EventKind) {
+        let event = SystemEvent::new("test", kind.clone(), EventPayload::SystemActive);
+        let json = serde_json::to_value(&event).unwrap();
+        let parsed: SystemEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.kind, kind);
+    }
+
+    fn roundtrip_payload(payload: EventPayload) {
+        let event = SystemEvent::new("test", EventKind::System, payload);
+        let json = serde_json::to_value(&event).unwrap();
+        let parsed: SystemEvent = serde_json::from_value(json).unwrap();
+        // Verify the payload variant matches by re-serializing to JSON.
+        let expected = serde_json::to_value(&event.payload).unwrap();
+        let actual = serde_json::to_value(&parsed.payload).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_event_kinds_all_roundtrip() {
+        let kinds = vec![
+            EventKind::Agent,
+            EventKind::Window,
+            EventKind::Input,
+            EventKind::Process,
+            EventKind::System,
+            EventKind::Audio,
+            EventKind::Clipboard,
+            EventKind::Notification,
+            EventKind::Debug,
+        ];
+        for kind in kinds {
+            roundtrip_event_kind(kind);
+        }
+    }
+
+    #[test]
+    fn test_payload_unit_variants() {
+        roundtrip_payload(EventPayload::SystemIdle);
+        roundtrip_payload(EventPayload::SystemActive);
+        roundtrip_payload(EventPayload::SystemSleep);
+        roundtrip_payload(EventPayload::SystemWake);
+    }
+
+    #[test]
+    fn test_payload_window_focused() {
+        roundtrip_payload(EventPayload::WindowFocused {
+            app: "Alacritty".into(),
+            title: "~/projects".into(),
+        });
+    }
+
+    #[test]
+    fn test_payload_window_opened() {
+        roundtrip_payload(EventPayload::WindowOpened {
+            app: "Firefox".into(),
+            pid: 1234,
+        });
+    }
+
+    #[test]
+    fn test_payload_window_closed() {
+        roundtrip_payload(EventPayload::WindowClosed {
+            app: "Firefox".into(),
+            pid: 1234,
+        });
+    }
+
+    #[test]
+    fn test_payload_workspace_changed() {
+        roundtrip_payload(EventPayload::WorkspaceChanged {
+            workspace: "2".into(),
+            output: Some("HDMI-1".into()),
+        });
+        roundtrip_payload(EventPayload::WorkspaceChanged {
+            workspace: "1".into(),
+            output: None,
+        });
+    }
+
+    #[test]
+    fn test_payload_network() {
+        roundtrip_payload(EventPayload::NetworkStatus {
+            connected: true,
+            ssid: Some("Home".into()),
+            strength: Some(85),
+        });
+        roundtrip_payload(EventPayload::NetworkStatus {
+            connected: false,
+            ssid: None,
+            strength: None,
+        });
+    }
+
+    #[test]
+    fn test_payload_battery() {
+        roundtrip_payload(EventPayload::BatteryStatus {
+            percentage: 85.5,
+            state: "Discharging".into(),
+            time_to_empty: Some(7200),
+            time_to_full: None,
+        });
+    }
+
+    #[test]
+    fn test_payload_audio_volume() {
+        roundtrip_payload(EventPayload::AudioVolumeChanged {
+            sink_name: "alsa_output.pci-0000_00_1f.3.analog-stereo".into(),
+            volume: 0.75,
+            muted: false,
+        });
+    }
+
+    #[test]
+    fn test_payload_media_playback() {
+        roundtrip_payload(EventPayload::MediaPlayback {
+            player: "spotify".into(),
+            state: "Playing".into(),
+            title: Some("Bohemian Rhapsody".into()),
+            artist: Some("Queen".into()),
+        });
+    }
+
+    #[test]
+    fn test_payload_notification_received() {
+        roundtrip_payload(EventPayload::NotificationReceived {
+            id: 42,
+            app_name: "Slack".into(),
+            summary: "New message".into(),
+            body: Some("Hello from team".into()),
+            urgency: "normal".into(),
+        });
+    }
+
+    #[test]
+    fn test_payload_action_events() {
+        let aid = Uuid::new_v4();
+        roundtrip_payload(EventPayload::ActionRequested {
+            action_id: aid,
+            action_type: "open_app".into(),
+            message: "Open Firefox".into(),
+        });
+        roundtrip_payload(EventPayload::ActionStarted {
+            action_id: aid,
+            message: "Opening Firefox...".into(),
+        });
+        roundtrip_payload(EventPayload::ActionCompleted {
+            action_id: aid,
+            result: "done".into(),
+        });
+        roundtrip_payload(EventPayload::ActionFailed {
+            action_id: aid,
+            error: "App not found".into(),
+        });
+        roundtrip_payload(EventPayload::ActionCancelled { action_id: aid });
+    }
+
+    #[test]
+    fn test_payload_snapshot_events() {
+        let sid = Uuid::new_v4();
+        roundtrip_payload(EventPayload::SnapshotTaken {
+            snapshot_id: sid,
+            label: "Work setup".into(),
+            node_count: 5,
+        });
+        roundtrip_payload(EventPayload::SnapshotDeleted { snapshot_id: sid });
+    }
+
+    #[test]
+    fn test_payload_restore_events() {
+        roundtrip_payload(EventPayload::RestorePreviewGenerated {
+            snapshot_id: Uuid::new_v4(),
+            plan_id: Uuid::new_v4(),
+            action_count: 3,
+        });
+        roundtrip_payload(EventPayload::RestoreStarted {
+            snapshot_id: Uuid::new_v4(),
+            plan_id: Uuid::new_v4(),
+            description: "Restoring development workspace".into(),
+        });
+    }
+
+    #[test]
+    fn test_payload_suggestion_generated() {
+        roundtrip_payload(EventPayload::SuggestionGenerated {
+            suggestion_id: Uuid::new_v4(),
+            kind: "context_hint".into(),
+            title: "Try: ask me anything".into(),
+            description: "Type a command in the bar".into(),
+            priority: 0.72,
+            action_label: Some("Try it".into()),
+            action_type: Some("take_snapshot".into()),
+            action_payload: json!({"label": "My first snapshot"}),
+        });
+    }
+
+    #[test]
+    fn test_payload_suggestion_dismissed() {
+        roundtrip_payload(EventPayload::SuggestionDismissed {
+            suggestion_id: Uuid::new_v4(),
+            reason: "user_dismissed".into(),
+        });
+    }
+
+    #[test]
+    fn test_payload_orchestration_plan() {
+        roundtrip_payload(EventPayload::OrchestrationPlanEvent {
+            plan_id: Uuid::new_v4(),
+            status: "Running".into(),
+            message: "Plan execution started".into(),
+        });
+    }
+
+    #[test]
+    fn test_payload_orchestration_node() {
+        roundtrip_payload(EventPayload::OrchestrationNodeEvent {
+            plan_id: Uuid::new_v4(),
+            node_id: Uuid::new_v4(),
+            status: "Completed".into(),
+            label: "Open Firefox".into(),
+            error: None,
+            result: Some("done".into()),
+        });
+    }
+
+    #[test]
+    fn test_system_event_roundtrip() {
+        let event = SystemEvent {
+            id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
+            timestamp: DateTime::parse_from_rfc3339("2025-01-15T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            source: "enad".into(),
+            kind: EventKind::Window,
+            payload: EventPayload::WindowFocused {
+                app: "Alacritty".into(),
+                title: "~".into(),
+            },
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+        let parsed: SystemEvent = serde_json::from_value(json).unwrap();
+
+        assert_eq!(parsed.id, event.id);
+        assert_eq!(parsed.source, event.source);
+        assert_eq!(parsed.kind, event.kind);
+    }
+
+    #[test]
+    fn test_event_wire_format() {
+        // Verify the exact wire format the bar receives on the event stream.
+        let payload = EventPayload::WindowFocused {
+            app: "Alacritty".into(),
+            title: "~".into(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+
+        // The payload must use adjacently tagged format:
+        // { "type": "WindowFocused", "data": { "app": "Alacritty", "title": "~" } }
+        assert!(json.get("type").is_some(), "EventPayload must have 'type' discriminator");
+        assert_eq!(json.get("type").unwrap(), "WindowFocused");
+        assert!(json.get("data").is_some(), "EventPayload must have 'data' content");
+
+        // Verify the bar's parse_event navigation works:
+        assert_eq!(json.get("type").unwrap().as_str().unwrap(), "WindowFocused");
+    }
+
+    #[test]
+    fn test_full_event_envelope_wire_format() {
+        // Verify the exact full envelope the bar receives.
+        // This matches enad's server.rs dispatch which wraps SystemEvent in IpcMessage.
+        use crate::types::ipc::IpcMessage;
+
+        let event = SystemEvent::new(
+            "enad",
+            EventKind::Window,
+            EventPayload::WindowFocused {
+                app: "Alacritty".into(),
+                title: "~".into(),
+            },
+        );
+
+        let msg = IpcMessage::event(event);
+        let json = serde_json::to_value(&msg).unwrap();
+
+        // Verify the bar's parse_event navigation path:
+        // json["kind"]["type"] == "Event"
+        // json["kind"]["body"]["kind"] == "Window"
+        // json["kind"]["body"]["payload"] has adjacently tagged EventPayload
+        let kind = json.get("kind").unwrap();
+        assert_eq!(kind.get("type").unwrap(), "Event");
+        let body = kind.get("body").unwrap();
+        assert_eq!(body.get("source").unwrap(), "enad");
+        assert_eq!(body.get("kind").unwrap(), "Window");
+        let payload = body.get("payload").unwrap();
+        assert_eq!(payload.get("type").unwrap(), "WindowFocused");
+        assert_eq!(
+            payload.get("data").unwrap().get("app").unwrap(),
+            "Alacritty"
+        );
     }
 }

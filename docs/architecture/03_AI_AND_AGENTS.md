@@ -1,37 +1,102 @@
-# 3. AI, Agents, and Workflow Runtime
+# 3. AI Runtime & Agent Architecture
+
+> **Status:** Accurate as of v0.1.0-developer-preview
+> **Last verified:** June 2026
 
 ## 3.1 AI Runtime Architecture
-The AI Runtime (`ena-ai`) is a Python daemon built with FastAPI, LangGraph/LangChain, and LiteLLM concepts.
 
-**Components:**
-1. **Provider Router:** Abstracts LLM APIs. If the user asks a simple OS question, it routes to local Ollama (Llama-3). If the user asks to summarize a 50-page PDF, it routes to Anthropic Claude 3.5 Sonnet or OpenAI GPT-4o based on user config.
-2. **Context Injector:** Before any prompt is sent, this layer injects real-time context from the Memory Engine (e.g., "The user is currently looking at a terminal running a rust build error").
-3. **Streaming Engine:** All interactions are streamed via Server-Sent Events (SSE) or WebSockets back to the Ena Bar for instant feedback.
+The AI Runtime (`ai-runtime`) is a **Python FastAPI server** that provides LLM-powered features to EnaOS.
 
-## 3.2 Local AI Inference Architecture
-Privacy is paramount. EnaOS ships with local capabilities out-of-the-box.
-- **Ollama Integration:** The OS manages an internal Ollama service.
-- **Model Management:** The OS pulls, updates, and unloads models dynamically to save VRAM.
-- **GPU Acceleration:** The NixOS configuration automatically provisions CUDA/ROCm/Metal drivers ensuring local models run hardware-accelerated.
-- **Fallback Chain:** Tasks attempting to use local inference gracefully fail over to cloud providers if local hardware lacks the VRAM, asking user permission first.
+### Components
 
-## 3.3 Agent Lifecycle Architecture
-Agents in EnaOS are autonomous, background-running entities that accomplish multi-step tasks.
+1. **API Server** (`src/api/server.py` + `src/api/routes.py`)
+   - FastAPI application with uvicorn
+   - Endpoints: `/health`, `/context`, `/chat`, `/chat/stream` (SSE), `/memory`, `/action`, `/orchestrate`
+   - CORS enabled for local development
+   - Port: 8900
 
-1. **Spawning:** The AI Runtime determines a request requires an agent (e.g., "Scrape this website and build a spreadsheet"). It requests the Agent Orchestrator to spawn an instance.
-2. **Sandboxing:** The Agent Orchestrator spins up an ephemeral Podman/Docker container or a restricted WASM runtime (like Wasmtime). This prevents malicious code execution.
-3. **Execution & Capabilities:** Agents are injected with tools. To use a tool (e.g., "Write File"), the agent sends a request over IPC. The Agent Engine checks the sandbox permissions before fulfilling it.
-4. **Termination:** Upon success or failure, the container is destroyed, and the result is logged to the Memory Engine.
+2. **Enad Bridge** (`src/bridge/enad.py`)
+   - Unix socket client connecting to enad
+   - Subscribes to all event kinds
+   - Maintains live `DesktopState` from received events
+   - Sends commands and receives responses
 
-## 3.4 Workflow Execution Design
-Workflows are deterministic or semi-deterministic DAGs (Directed Acyclic Graphs).
-- **Trigger:** Time-based (Cron), Event-based (e.g., "When I open VS Code"), or AI-triggered.
-- **Nodes:** Nodes can be shell scripts, API calls, or LLM prompts.
-- **Engine:** A lightweight Rust executor that parses YAML/JSON workflow definitions and executes them concurrently, emitting progress events to the Event Bus.
+3. **Inference** (`src/inference/`)
+   - **Provider router** (`provider.py`) — routes to Ollama (local) or configurable cloud API
+   - **Prompt builder** (`prompt.py`) — injects desktop context into system prompts
+   - **Ollama client** (`ollama.py`) — async HTTP client for Ollama API
+
+4. **Orchestration** (`src/orchestration/`)
+   - **Plan parser** (`planner.py`) — LLM-parses natural language intents into structured `ExecutionPlan` JSON
+   - Plan format: DAG of actions with dependency edges
+
+5. **Context** (`src/context/`)
+   - **Session manager** (`sessions.py`) — in-memory conversation history
+   - **State manager** (`state.py`) — live desktop state aggregation
+
+### Data Flow
+
+```
+User query → ena-bar → enad (IPC) → AI Runtime (HTTP) → Ollama/Cloud
+                                          │
+                                    Context injection
+                                    (desktop state, sessions)
+                                          │
+                                    Response → enad → ena-bar
+```
+
+## 3.2 Local AI Inference
+
+EnaOS supports **local-first inference** via Ollama:
+
+- **Model:** llama3.2 or compatible (configurable)
+- **Startup:** `ollama serve` (manual, not auto-started by enad yet)
+- **Integration:** AI Runtime connects to `http://localhost:11434`
+- **Streaming:** Server-Sent Events for real-time token delivery
+
+### Provider Router
+- Simple queries → local Ollama (fast, private)
+- Complex queries → cloud API if configured (OpenAI, Anthropic)
+- Fallback: if Ollama unavailable, returns informative error
+
+## 3.3 Agent Architecture
+
+EnaOS currently has **no autonomous agent execution**. The `SpawnAgent` IPC command exists as a stub for future implementation.
+
+### Planned Agent Architecture (Future)
+- Sandboxed execution via Podman containers
+- Capability-based permission model
+- WASM-based plugin SDK (future)
+
+### Current Capabilities
+- **Orchestration Engine** executes DAG-based plans with retry and rollback
+- **Action Executor** runs individual actions (open app, focus window, etc.)
+- No autonomous agents run in v0.1.0
+
+## 3.4 Workflow Execution
+
+Workflows are **DAGs (Directed Acyclic Graphs)** of typed actions:
+
+```
+Plan: "Setup development environment"
+├── Open editor (requires_approval: false)
+├── Start dev server (requires_approval: false)
+└── Open docs (requires_approval: false)
+```
+
+### Engine Features
+- Topological sort for dependency ordering
+- `EdgeCondition`: Success (default), Always, OnFailure
+- Retry with configurable max attempts and exponential backoff
+- Rollback in reverse completion order on failure
+- Approval flow: plans can be marked for user approval before execution
 
 ## 3.5 Plugin Architecture
-Extensibility is core to EnaOS.
-- **Architecture:** Plugins are WASM modules or standalone local binaries communicating via gRPC.
-- **Manifest:** Every plugin has an `ena-plugin.json` declaring its desired capabilities (e.g., `read_files`, `desktop_notifications`).
-- **Discovery:** The Ena Bar dynamically loads plugin capabilities and injects them as tools into the LLM context.
-- **Example:** A Spotify plugin registers the `pause_music` and `search_song` tools, making them natively available to the AI via voice or text.
+
+EnaOS has **no plugin SDK** in v0.1.0. The architecture supports future WASM-based plugins, but this is not implemented.
+
+**Current extensibility points:**
+- New `ActionType` variants in `actions/types.rs`
+- New `Command` variants in `types/ipc.rs`
+- New `EventPayload` variants in `types/events.rs`
+- All IPC types are open for extension

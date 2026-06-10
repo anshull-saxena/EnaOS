@@ -15,6 +15,9 @@ mod types;
 #[cfg(target_os = "linux")]
 mod system;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use clap::Parser;

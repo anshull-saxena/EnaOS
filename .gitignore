@@ -103,3 +103,6 @@ apps/ena-bar/src-tauri/target/
 *.sqlite
 *.db
 memory-engine/vector-db/data/
+
+# Release assets (screenshot/GIF capture)
+docs/assets/release/

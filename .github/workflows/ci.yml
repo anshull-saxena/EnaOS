@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  enad:
+    name: enad (daemon) — build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+      - name: Build
+        run: cargo build --release --manifest-path runtimes/enad/Cargo.toml
+      - name: Test
+        run: cargo test --manifest-path runtimes/enad/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path runtimes/enad/Cargo.toml -- -D warnings
+      - name: Check formatting
+        run: cargo fmt --manifest-path runtimes/enad/Cargo.toml -- --check
+
+  ena-bar:
+    name: ena-bar (GTK4) — build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+      - name: Install GTK4 + layer-shell deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgtk-4-dev libadwaita-1-dev pkg-config
+          # gtk4-layer-shell is not in default Ubuntu repos without a PPA.
+          # We install the dev package if available, otherwise continue without it.
+          # The bar won't have layer-shell support in CI (can't run Wayland anyway).
+          sudo apt-get install -y -qq libgtk4-layer-shell-dev 2>/dev/null || true
+      - name: Build
+        run: cargo build --release --manifest-path shell/ena-bar/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --manifest-path shell/ena-bar/Cargo.toml -- -D warnings

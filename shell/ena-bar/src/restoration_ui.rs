@@ -127,25 +127,18 @@ fn relative_time(iso: &str) -> String {
 /// Parse a snapshot JSON value into SnapshotSummary.
 fn parse_snapshot(snap: &Value) -> SnapshotSummary {
     SnapshotSummary {
-        id: snap.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        id: snap.get("snapshot_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         label: snap.get("label").and_then(|v| v.as_str()).unwrap_or("Workspace").to_string(),
         created_at: snap.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         window_count: snap
-            .get("summary")
-            .and_then(|s| s.get("window_count"))
+            .get("app_count")
             .and_then(|v| v.as_i64())
             .unwrap_or(0),
         terminal_count: snap
-            .get("summary")
-            .and_then(|s| s.get("terminal_count"))
+            .get("terminal_count")
             .and_then(|v| v.as_i64())
             .unwrap_or(0),
-        active_project: snap
-            .get("summary")
-            .and_then(|s| s.get("active_project"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        active_project: String::new(),
     }
 }
 
@@ -156,10 +149,12 @@ fn parse_preview_actions(data: &Value) -> Vec<PreviewAction> {
         .map(|arr| {
             arr.iter()
                 .map(|a| PreviewAction {
-                    id: a.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    action_type: a.get("type").and_then(|v| v.as_str()).unwrap_or("Action").to_string(),
+                    id: format!("{}-{}",
+                        a.get("action_type").and_then(|v| v.as_str()).unwrap_or("action"),
+                        a.get("target").and_then(|v| v.as_str()).unwrap_or("unknown")),
+                    action_type: a.get("action_type").and_then(|v| v.as_str()).unwrap_or("Action").to_string(),
                     label: a.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    safe: a.get("safe").and_then(|v| v.as_bool()).unwrap_or(true),
+                    safe: !a.get("requires_approval").and_then(|v| v.as_bool()).unwrap_or(false),
                     selected: true,
                 })
                 .collect()
@@ -167,9 +162,16 @@ fn parse_preview_actions(data: &Value) -> Vec<PreviewAction> {
         .unwrap_or_default()
 }
 
-/// Parse IPC response body, trying various response formats.
+/// Parse IPC response body from enad, navigating through the envelope.
+///
+/// Enad response wire format:
+///   {"id": "...", "kind": {"type": "Response", "body": {"Data": {"payload": ...}}}}
+///                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/// We extract the inner payload from the Response enum (which uses default serde
+/// representation, so variant name "Data" is a key in the body object).
 fn get_response_body(response: &Value) -> Option<&Value> {
-    let body = response.get("body")?;
+    let kind = response.get("kind")?;
+    let body = kind.get("body")?;
     body.get("Ok")
         .or_else(|| body.get("Data"))
         .or(Some(body))
@@ -180,12 +182,17 @@ fn extract_snapshots(response: &Value) -> Vec<Value> {
         Some(b) => b,
         None => return Vec::new(),
     };
-    // Try "snapshots" array.
-    if let Some(arr) = body.get("snapshots").and_then(|v| v.as_array()) {
+    // enad wraps data in "payload": {"snapshots": [...]} for Data variant.
+    let payload = body.get("payload");
+    if let Some(arr) = payload.and_then(|p| p.get("snapshots").and_then(|v| v.as_array())) {
         return arr.clone();
     }
-    // Try direct array.
+    // Try direct array (fallback).
     if let Some(arr) = body.as_array() {
+        return arr.clone();
+    }
+    // Try direct array under payload.
+    if let Some(arr) = payload.and_then(|p| p.as_array()) {
         return arr.clone();
     }
     Vec::new()
@@ -193,10 +200,12 @@ fn extract_snapshots(response: &Value) -> Vec<Value> {
 
 fn extract_preview(response: &Value) -> Option<Vec<PreviewAction>> {
     let body = get_response_body(response)?;
-    let actions = parse_preview_actions(body);
+    // enad wraps data in "payload" for Data variant.
+    let payload = body.get("payload").unwrap_or(body);
+    let actions = parse_preview_actions(payload);
     if actions.is_empty() {
         // Try nested in "preview".
-        body.get("preview")
+        payload.get("preview")
             .map(|p| parse_preview_actions(p))
     } else {
         Some(actions)
@@ -431,8 +440,9 @@ impl RestorationWidget {
                 }
             }
             "RestoreSnapshot" => {
-                // Check for error
-                let body = response.get("body");
+                // Check for error — navigate through the enad envelope.
+                let kind = response.get("kind");
+                let body = kind.and_then(|k| k.get("body"));
                 let is_error = body
                     .and_then(|b| b.get("Error"))
                     .or_else(|| body.and_then(|b| b.get("error")))

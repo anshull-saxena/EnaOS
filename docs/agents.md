@@ -1,10 +1,15 @@
 # EnaOS — Multi-Agent Engineering Organization
 
-> **Disciplined engineering roles, not an "AI agent swarm."**
-> Each agent represents a bounded, ownable engineering role analogous to a real team in an OS engineering organization.
+> **⚠️ ARCHIVE — This document describes a planned architecture that diverges from the current codebase.**
+> It was written as an aspirational blueprint for future engineering org structure, referencing technologies
+> and subsystems not yet implemented (gRPC, Smithay compositor, LangChain, WASM plugins, PostgreSQL,
+> Redis/NATS, NixOS). For the **actual** system architecture as of v0.1.0-developer-preview, see:
+> - [01_OVERVIEW.md](architecture/01_OVERVIEW.md) — system overview and structure
+> - [02_SYSTEM_ARCHITECTURE.md](architecture/02_SYSTEM_ARCHITECTURE.md) — current service boundaries
+> - [04_DATA_AND_MEMORY.md](architecture/04_DATA_AND_MEMORY.md) — current SQLite persistence
 >
-> **Last updated:** 2026-05-21
-> **System version:** 0.2.0
+> **Last updated:** 2026-05-21 (original)
+> **Last verified against codebase:** 2026-06 (stale)
 
 ---
 

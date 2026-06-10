@@ -218,7 +218,9 @@ impl AmbientSuggestionWidget {
 /// Parse a suggestion from an IPC system event payload.
 pub(crate) fn parse_suggestion_event(payload: &Value) -> Option<AmbientSuggestion> {
     let data = payload.get("data")?;
-    let event_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    // EventPayload is adjacently tagged: {"type": "SuggestionGenerated", "data": {...}}
+    // The type discriminator is at the payload level, not inside data.
+    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if event_type != "SuggestionGenerated" {
         return None;
     }

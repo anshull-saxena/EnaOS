@@ -1,11 +1,16 @@
 ---
 title: "I'm Building an AI-Native Desktop OS in Rust + GTK4 — and I Need Your Help"
-description: "EnaOS is an open-source, Linux-native AI operating environment. No Electron, no browser wrappers — real Rust daemons, GTK4 widgets, and Wayland layer-shell surfaces. I've built the foundation. Now I need contributors to finish the vision."
+description: "EnaOS is an open-source, Linux-native AI operating environment. No Electron, no browser wrappers — real Rust daemons, GTK4 widgets, and Wayland layer-shell surfaces. Developer Preview 0.1 is ready."
 published: false
 tags: [rust, gtk4, opensource, linux]
 canonical_url: https://enaos.tech
 cover_image: https://enaos.tech/banner.png
 ---
+
+> **⚠️ DRAFT — This post needs updating for the v0.1.0-developer-preview release.**
+> The IPC protocol section now uses `{"kind": {"type": ..., "body": ...}}` (adjacently-tagged enums),
+> the AI Runtime is built and working, and the architecture docs have been updated.
+> See [docs/architecture/](architecture/) for the current state.
 
 *This is not another Electron app that calls itself a desktop OS.*
 *This is real: Rust daemons, GTK4 widgets, Wayland layer-shell protocols, and a Unix socket IPC bus connecting them.*
@@ -22,7 +27,7 @@ The core idea: **the AI should be wired directly into the operating system event
 
 No screenshots. No hacks. No wrappers. Just real system state, streamed in real time, rendered natively.
 
-I've built the foundation — the daemon, the bar, the IPC layer, seven desktop integration subsystems — and it **compiles and runs**. But there's a mountain of work ahead, and I need help.
+I've built the foundation — the daemon, the bar, the IPC layer, seven desktop integration subsystems — and it **compiles and runs**. The Developer Preview 0.1 is ready.
 
 This post is a deep-dive into what's built, what's next, and exactly how you can contribute.
 
@@ -91,12 +96,10 @@ The IPC protocol is simple but effective — **line-delimited JSON** over a Unix
 // From runtimes/enad/src/types/ipc.rs
 pub struct IpcMessage {
     pub id: String,
-    #[serde(rename = "type")]
-    pub msg_type: MessageType,
-    pub body: Option<serde_json::Value>,
+    pub kind: MessageKind,  // Adjacently tagged: { type, body }
 }
 
-pub enum MessageType {
+pub enum MessageKind {
     Subscribe,  // Client: "subscribe me to these event kinds"
     Ping,       // Client/Server: heartbeat
     Pong,       // Client/Server: heartbeat response
@@ -112,7 +115,7 @@ The beauty of this architecture is its **simplicity**. There's no HTTP, no REST,
 `ena-bar` is the visual frontend — a native GTK4 application that:
 
 - **Creates a Wayland layer-shell surface** using `gtk4-layer-shell` anchored to the bottom of the screen
-- **Stays above normal windows** via `set_layer(SWAY_LAYER_SHELL_LAYER_OVERLAY)` and `set_exclusive_zone(-1)`
+- **Stays above normal windows** via `set_layer(Overlay)` and `set_exclusive_zone(-1)`
 - **Connects to `enad`** over a Unix socket in a background thread
 - **Streams events** through an `std::sync::mpsc::channel` → `glib::idle_add_local` pipeline
 - **Renders a minimal widget tree** that reflects the current daemon state
@@ -144,7 +147,7 @@ State transitions are triggered **only** by events from the daemon. The bar neve
 ### The IPC Client (`shell/ena-bar/src/ipc.rs`)
 
 ```rust
-pub fn run(socket_path: &str, tx: Sender<EnadEvent>, running: Arc<AtomicBool>) {
+pub fn run(socket_path: &str, running: Arc<AtomicBool>, tx: Sender<EnadEvent>) {
     // Connect to Unix socket
     // Spawn reader thread with BufReader
     // Keepalive ping every 1 second
@@ -185,21 +188,21 @@ The cost? A steeper learning curve. GTK4 + Rust has fewer tutorials than Tauri +
 
 ---
 
-## What's Built (The Foundation)
+## What's Built (Developer Preview 0.1)
 
 The following code compiles, runs, and works today on Wayland:
 
-✅ **`enad` daemon** — 2,800+ lines of Rust across 10 modules. Event bus, Unix socket server, process lifecycle, signal handling. All 7 subsystem stubs with D-Bus integration logic.
+✅ **`enad` daemon** — 3,000+ lines of Rust across 18 modules. Event bus, Unix socket server, 22 IPC commands, 28 events, orchestration engine, snapshot store, context engine, suggestion engine, working memory, first-run management.
 
-✅ **`ena-bar` GTK4 frontend** — 1,200+ lines of Rust + CSS across 6 modules. Widget tree, IPC client, 4-state state machine, frame clock animation, keyboard shortcuts, mic scaffolding.
+✅ **`ena-bar` GTK4 frontend** — 1,800+ lines of Rust + CSS across 10 modules. Widget tree, IPC client, 4-state machine, command palette, restoration widget, orchestration timeline, ambient suggestions, welcome overlay.
 
-✅ **IPC protocol** — JSON-line Unix socket protocol with Subscribe/Ping/Pong/Command/Event message types. Keepalive, auto-reconnect, per-kind subscription filtering.
+✅ **AI Runtime** — Python FastAPI server with Ollama integration, enad bridge, streaming SSE, orchestration plan parser. Live.
 
-✅ **Desktop integration stubs** — UPower (D-Bus), NetworkManager (D-Bus), window tracking (swaymsg/hyprctl/gdbus), workspace tracking, clipboard, notifications, audio.
+✅ **IPC protocol** — 71 tests including round-trip serde, wire-format compatibility, integration tests. Zero regressions.
 
-✅ **Build system** — Cargo workspace, GTK4 with v4_22 features, gtk4-layer-shell 0.8 on Linux, macOS fallback for development.
+✅ **Desktop integration** — UPower, NetworkManager, window tracking (Sway/Hyprland/GNOME), workspace, clipboard, notifications, audio/MPRIS.
 
-✅ **Clean build** — Zero errors, zero warnings on `cargo build`.
+✅ **Build system** — CI pipeline (GitHub Actions), release config (LTO, small binaries), conditional Linux dependencies.
 
 ---
 
@@ -210,86 +213,40 @@ Here's the honest roadmap. The foundation is solid. Everything else needs builde
 ### 🔴 Critical (Immediate Help Needed)
 
 **1. Complete the Desktop Integration Subsystems**
-The 7 subsystem modules in `runtimes/enad/src/system/` have solid D-Bus scaffolding but need production-quality implementation:
-- `window.rs` — needs multi-compositor detection (Sway vs Hyprland vs GNOME)
-- `clipboard.rs` — needs efficient polling without CPU spin
-- `notifications.rs` — needs proper D-Bus signal subscription
-- `network.rs` — needs signal strength normalization + SSID encoding
-- `upower.rs` — needs online/offline transition handling
-- `audio.rs` — needs PulseAudio volume events + MPRIS media metadata
-- `workspace.rs` — needs compositor-specific JSON parsing
+The 7 subsystem modules in `runtimes/enad/src/system/` work but need production-quality polish:
+- Window tracking fallback chain needs exhaustively testing on all 3 compositors
+- Clipboard polling should use `inotify` instead of timer-based polling
+- Notification signal subscription needs race-free initialization
+- Network SSID encoding varies by locale — needs handling
 
 *Skills needed: Rust, tokio async, D-Bus (zbus), Linux system programming*
 
-**2. End-to-End Integration Testing**
-Currently each subsystem compiles but hasn't been tested end-to-end with a real `enad` + `ena-bar` session. We need:
-- A test script that starts `enad`, connects `ena-bar`, subscribes to events, and verifies the pipeline
-- CI integration with GitHub Actions
-- A mock daemon for testing the bar in isolation (without a real Wayland compositor)
+**2. Flatpak Packaging**
+Currently requires manual build. A Flatpak would let users install EnaOS on any distro with a single command.
 
-*Skills needed: Linux, shell scripting, CI/CD, testing*
+*Skills needed: Flatpak, Linux packaging*
 
-**3. Real-Time System Context Card**
-The `ena-bar` context label should display a rich, formatted view of system state:
-- Focused application name + icon
-- Workspace name/number
-- Battery percentage with visual indicator
-- Network SSID + signal strength
-- Unread notification count
+**3. Screenshots & Demos**
+The project needs real screenshots and demo GIFs for the GitHub README and release page. See `scripts/release-assets.sh` for a capture guide.
 
-Currently it shows raw text. We need a proper widget.
-
-*Skills needed: GTK4, Rust, UI design*
+*Skills needed: Wayland, screen recording, documentation*
 
 ### 🟡 Medium Priority
 
-**4. AI Runtime (`runtimes/ai-runtime/`)**
-This is the next major layer — a Python (or Rust) service that:
-- Connects to Ollama for local LLM inference
-- Injects system context into prompts (focused window, clipboard, battery, etc.)
-- Streams responses back through `enad` → `ena-bar`
-- Supports tool-calling (execute shell commands, open files, search web)
+**4. Auto-Snapshot Loop**
+Periodic workspace snapshots — configurable interval, event-triggered capture. Currently only manual snapshots.
 
-This module doesn't exist yet. It needs to be designed and built from scratch.
+**5. Global Keyboard Shortcut**
+`Super+Space` to summon/hide the bar from any application via D-Bus global shortcut.
 
-*Skills needed: Python or Rust, LLM inference (Ollama), prompt engineering, FastAPI*
-
-**5. Wayland Compositor Compatibility Testing**
-We need to verify `ena-bar` works correctly on:
-- GNOME (Mutter)
-- Sway (wlroots)
-- Hyprland (wlroots-hyprland)
-- KDE (KWin)
-- River
-- niri
-
-Each compositor handles layer-shell differently. We need test reports and fixes.
-
-*Skills needed: Wayland, various compositors, GTK4*
-
-**6. Global Keyboard Shortcut**
-Currently the bar receives keyboard events only when focused. A true global shortcut (e.g., `Super+Space`) requires:
-- Linux: D-Bus global shortcut registration (or compositor-specific protocol)
-- macOS: Global hotkey API
-- The shortcut should summon/hide the bar from any application
-
-*Skills needed: D-Bus, Wayland protocols, platform-specific APIs*
-
-**7. PipeWire Audio Capture**
-The mic button exists but does nothing. Proper voice input requires:
-- PipeWire stream capture in Rust (pipewire-rs)
-- Audio level visualization in the bar
-- Voice activity detection (VAD) for push-to-talk
-
-*Skills needed: PipeWire, Rust, audio processing*
+**6. AI Runtime Auto-Start**
+enad should manage the AI Runtime process lifecycle (start/stop/restart). Currently manual.
 
 ### 🟢 Nice-to-Have
 
-**8. Developer Preview ISO** — NixOS-based live image with `enad` + `ena-bar` pre-installed
-**9. Flatpak packaging** — For distribution-independent installation
-**10. Plugin SDK** — WASM-based extension system
-**11. Memory Engine** — PostgreSQL + pgvector for persistent AI context
-**12. Agent Engine** — Multi-agent orchestration with baton-passing
+**7. PipeWire Audio Capture** — Voice input for the mic button
+**8. WASM Plugin SDK** — Extension system for third-party capabilities
+**9. Cross-Distro Packages** — deb, rpm, pacman
 
 ---
 
@@ -298,55 +255,41 @@ The mic button exists but does nothing. Proper voice input requires:
 ### 🚀 Quick Start (5 minutes)
 
 ```bash
-# 1. Clone the repository
+# 1. Clone and build
 git clone https://github.com/anshull-saxena/EnaOS.git
-cd EnaOS
+cd EnaOS/runtimes/enad && cargo build --release
+cd ../shell/ena-bar && cargo build --release
 
-# 2. Build the daemon
-cd runtimes/enad
-cargo build --release
-
-# 3. Build the bar
-cd shell/ena-bar
-cargo build --release
-
-# 4. Run them (requires a Wayland compositor)
+# 2. Run (requires Wayland compositor)
 ./runtimes/enad/target/release/enad --socket /tmp/enad.sock
 ./shell/ena-bar/target/release/ena-bar --socket-path /tmp/enad.sock
 ```
 
 ### 🛠 Prerequisites
 
-| Package | Purpose | Install (Debian/Ubuntu) | Install (Fedora) | Install (Arch) |
-|---------|---------|------------------------|------------------|----------------|
-| Rust 1.75+ | Compiler | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` | same | same |
-| GTK4 dev | UI framework | `apt install libgtk-4-dev` | `dnf install gtk4-devel` | `pacman -S gtk4` |
-| libadwaita | GTK4 widgets | `apt install libadwaita-1-dev` | `dnf install libadwaita-devel` | `pacman -S libadwaita` |
-| gtk4-layer-shell | Wayland overlay | `apt install libgtk4-layer-shell-dev` | `dnf install gtk4-layer-shell-devel` | `pacman -S gtk4-layer-shell` |
-| pkg-config | Build tooling | `apt install pkg-config` | `dnf install pkgconfig` | `pacman -S pkgconf` |
-| UPower | Battery (optional) | `apt install upower` | `dnf install upower` | `pacman -S upower` |
-| NetworkManager | Network (optional) | `apt install network-manager` | `dnf install NetworkManager` | `pacman -S networkmanager` |
-| wl-clipboard | Clipboard (optional) | `apt install wl-clipboard` | `dnf install wl-clipboard` | `pacman -S wl-clipboard` |
+| Package | Purpose | Install (Debian/Ubuntu) |
+|---------|---------|------------------------|
+| Rust 1.75+ | Compiler | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` |
+| GTK4 dev | UI framework | `apt install libgtk-4-dev libadwaita-1-dev` |
+| gtk4-layer-shell | Wayland overlay | `apt install libgtk4-layer-shell-dev` |
+| wl-clipboard | Clipboard (optional) | `apt install wl-clipboard` |
 
 ### 📋 Where to Start
 
 | Your Skills | Best Entry Point | File |
 |-------------|------------------|------|
 | Rust, async, Linux | Desktop integration | `runtimes/enad/src/system/*.rs` |
-| Rust, GTK4 | Bar widgets, animations | `shell/ena-bar/src/bar.rs` |
-| GTK4, CSS | Styling, theming | `shell/ena-bar/src/style.css` |
-| Linux, testing | End-to-end testing | `runtimes/enad/src/main.rs` |
-| Python, LLMs | AI Runtime | `runtimes/ai-runtime/` (empty) |
-| DevOps, Nix | CI, packaging | `.github/` + `infrastructure/` |
-| Documentation | README, docs | `docs/architecture/*.md` |
+| Rust, GTK4 | Bar widgets | `shell/ena-bar/src/bar.rs` |
+| Python, LLMs | AI Runtime | `runtimes/ai-runtime/src/` |
+| Linux, testing | E2E testing | `runtimes/enad/src/tests.rs` |
+| Documentation | Docs | `docs/` |
 
 ### 🏗 How We Work
 
 - **Trunk-based development** — short-lived branches from `main`
 - **Conventional commits** — `feat:`, `fix:`, `docs:`, `refactor:`, `test:`
-- **Code review required** — PRs need at least one review before merge
-- **No spec work without implementation** — we ship code, not proposals
-- **License:** MIT — your contributions belong to everyone
+- **Code review required** — PRs need at least one review
+- **MIT License** — your contributions belong to everyone
 
 ---
 
@@ -356,23 +299,19 @@ EnaOS is built on a few convictions:
 
 ### 1. The Desktop Should Be the AI Interface
 
-Not the browser. Not a chatbot widget on a SaaS site. The **operating system itself** should understand context and surface AI capabilities natively. The OS knows what you're doing. The OS knows what files you have. The OS controls audio, clipboard, notifications, and hardware. That's the integration surface AI needs — not a screenshot of it.
+Not the browser. Not a chatbot widget on a SaaS site. The **operating system itself** should understand context and surface AI capabilities natively.
 
 ### 2. Native Over Web — Always
 
-For system-level components, the browser is the wrong tool. Electron apps are not desktop software — they're websites pretending to be desktop software. They consume 10x the resources, feel 0.5x as responsive, and integrate with the OS through leaky abstractions.
-
-EnaOS uses GTK4 because the bar is a **system component**, not an app. It should boot in milliseconds, consume single-digit megabytes, and feel as native as GNOME Shell itself.
+For system-level components, the browser is the wrong tool. Electron apps consume 10x the resources. EnaOS uses GTK4 because the bar is a **system component**, not an app.
 
 ### 3. Real State, Not Simulated UI
 
-The bar never invents state. If the daemon disconnects, the status dot turns grey. If the battery module hasn't emitted an event, no battery indicator appears. No spinners, no skeletons, no "loading..." — just real system state or nothing.
-
-This discipline keeps the architecture honest. Every widget in the bar corresponds to a real daemon event. If a widget exists without a corresponding event source, that's a bug.
+The bar never invents state. No spinners, no skeletons, no "loading..." — just real system state or nothing.
 
 ### 4. Local-First, Privacy-Preserving
 
-EnaOS is designed for local inference via Ollama. Your system state — focused windows, clipboard contents, workspace layout — never leaves your machine. Cloud AI is an optional fallback, not the default.
+Designed for local inference via Ollama. Your system state never leaves your machine.
 
 ---
 
@@ -380,46 +319,40 @@ EnaOS is designed for local inference via Ollama. Your system state — focused 
 
 Here's what I need from you:
 
-**If you write Rust** — There are open issues in `runtimes/enad/src/system/` that need your eyes. D-Bus integration, tokio async, Linux system programming. Pick a subsystem, implement it, open a PR.
+**If you write Rust** — Open issues in `runtimes/enad/src/system/`. Pick a subsystem, implement it, open a PR.
 
-**If you know GTK4** — The bar needs polishing. Animations, accessibility, widget architecture, theming. `shell/ena-bar/src/bar.rs` is the main file.
+**If you know GTK4** — The bar needs polishing. Animations, accessibility, theming.
 
-**If you're into AI/LLMs** — The AI Runtime needs to be designed from scratch. How do we inject system context into prompts? How do we handle tool-calling safely? Join [#architecture discussions](https://github.com/anshull-saxena/EnaOS/discussions).
+**If you use Linux on Wayland** — Test the bar on your compositor. Report what works.
 
-**If you love Linux desktops** — Test the bar on your compositor. Report what works and what doesn't. Help us build the compatibility matrix.
+**If you write docs** — The docs need to grow as the codebase grows.
 
-**If you write docs** — The architecture documents need to evolve as the codebase grows. Help others understand the system.
-
-**If you just want to follow along** — Star the repo. Share this post. The more people watching, the faster this grows.
+**If you just want to follow along** — Star the repo. Share this post.
 
 ---
 
 ## The Roadmap
 
 ```
-Phase 1 (Current) — Foundation ✅
+Milestone 0 — Foundation ✅
 ├── Rust daemon (enad) with event bus + IPC ✅
 ├── GTK4 frontend (ena-bar) with layer-shell ✅
-├── 7 desktop integration subsystems (stubs) ✅
-└── MIT licensed on GitHub ✅
+├── AI Runtime with Ollama integration ✅
+├── 71 IPC round-trip tests ✅
+├── 7 desktop integration subsystems ✅
+└── Developer Preview 0.1 ✅
 
-Phase 2 (Next) — Integration
+Milestone 1 — Integration (Current)
 ├── Complete all 7 desktop subsystems
-├── CI pipeline + end-to-end tests
-├── AI Runtime (Ollama integration)
+├── Flatpak packaging
+├── Auto-snapshot loop
 ├── Global keyboard shortcut
-└── Flatpak packaging
+└── AI Runtime auto-start
 
-Phase 3 — Intelligence
+Milestone 2 — Intelligence (Future)
 ├── Context-aware prompt injection
 ├── Multi-agent orchestration
-├── Memory engine (pgvector)
-└── Developer Preview ISO
-
-Phase 4 — Ecosystem
 ├── Plugin SDK (WASM)
-├── Agent marketplace
-├── Native Settings + Files apps
 └── Stable release
 ```
 

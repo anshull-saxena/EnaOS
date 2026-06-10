@@ -53,10 +53,12 @@ impl WelcomeOverlay {
             .build();
 
         // ── Suggestion chips ─────────────────────────────────────
+        // Each chip corresponds to a real enad IPC command.
+        // Label is user-facing, command is the IPC payload.
         let chip_specs: [(&str, &str); 3] = [
             ("open browser", "Open Browser"),
             ("check system status", "Check System"),
-            ("create a snapshot", "Save Snapshot"),
+            ("create a snapshot", "Take Snapshot"),
         ];
 
         let chip_box = gtk4::Box::builder()
@@ -81,7 +83,7 @@ impl WelcomeOverlay {
 
         // ── Dismiss hint ─────────────────────────────────────────
         let dismiss_hint = gtk4::Label::builder()
-            .label("Press Escape or click to get started")
+            .label("Press Escape or type to get started")
             .xalign(0.5)
             .margin_top(16)
             .css_classes(["ena-welcome-hint"])

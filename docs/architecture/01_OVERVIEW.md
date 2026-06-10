@@ -1,62 +1,156 @@
-# 1. System Overview & Monorepo Architecture
+# 1. System Overview
 
-## 1.1 Monorepo Architecture
-EnaOS uses a monolithic repository structure to ensure atomic changes across the system daemon, IPC contracts, desktop shell, and AI runtimes.
+## 1.1 Repository Structure
+
+EnaOS is a polyglot monorepo with two primary runtimes and a GTK4 shell:
 
 ```text
-/enaos
-├── agent-engine/     # Agent lifecycle, sandboxing, and capability registry
-├── ai-runtime/       # LLM provider abstraction, local inference (Ollama), orchestration
-├── apps/             # Core OS GUI applications (Settings, Files)
-├── core/             # Low-level primitives: IPC, Event Bus, Config, Telemetry
-├── docs/             # Architecture, API specs, and runbooks
-├── ena-bar/          # The primary AI interaction surface (frontend + backend)
-├── infrastructure/   # NixOS flakes, Dockerfiles, IaC
-├── memory-engine/    # PostgreSQL (Relational) + pgvector (Vector) + Graph DB integration
-├── plugins/          # 3rd-party extensibility examples and core plugins
-├── scripts/          # DX and CI scripts (build, dev, deploy)
-├── sdk/              # Client libraries for IPC/Events (Rust, Python, TS)
-├── shell/            # Wayland Compositor and Desktop UI (GTK4/libadwaita or Tauri)
-├── system-services/  # Core system daemons (Automation, Auth, Settings)
-└── workflow-engine/  # DAG-based AI and system automation execution engine
+EnaOS/
+├── runtimes/
+│   ├── enad/              # Rust system daemon (core)
+│   │   ├── src/
+│   │   │   ├── main.rs          # Entry point, subsystem orchestration
+│   │   │   ├── bus.rs           # Event bus (tokio broadcast)
+│   │   │   ├── server.rs        # Unix socket IPC server
+│   │   │   ├── process.rs       # Process lifecycle manager
+│   │   │   ├── hooks.rs         # Signal handling
+│   │   │   ├── system/          # Desktop integration subsystems
+│   │   │   │   ├── upower.rs    # Battery/power (D-Bus)
+│   │   │   │   ├── network.rs   # NetworkManager (D-Bus)
+│   │   │   │   ├── window.rs    # Window focus (swaymsg/hyprctl/gdbus)
+│   │   │   │   ├── workspace.rs # Workspace awareness
+│   │   │   │   ├── clipboard.rs # Clipboard monitoring
+│   │   │   │   ├── notifications.rs  # Freedesktop notifications
+│   │   │   │   └── audio.rs     # PulseAudio + MPRIS
+│   │   │   ├── actions/         # Action types, executor, handlers
+│   │   │   ├── orchestration/   # DAG execution engine
+│   │   │   ├── snapshot/        # Workspace snapshot store (SQLite)
+│   │   │   ├── restore/         # Restoration planner
+│   │   │   ├── context/         # Command intelligence engine
+│   │   │   ├── suggestion/      # Ambient suggestion engine (SQLite)
+│   │   │   ├── memory/          # Working memory store (SQLite)
+│   │   │   ├── types/           # IPC types, event types
+│   │   │   └── first_run.rs     # Onboarding management
+│   │   └── Cargo.toml
+│   └── ai-runtime/        # Python AI inference layer
+│       ├── src/
+│       │   ├── main.py          # FastAPI server entry point
+│       │   ├── api/server.py    # HTTP API (FastAPI)
+│       │   ├── bridge/enad.py   # Unix socket bridge to enad
+│       │   ├── inference/       # Ollama integration, prompts
+│       │   ├── orchestration/   # LLM-based plan parser
+│       │   └── context/         # Desktop state, sessions
+│       └── requirements.txt
+│
+├── shell/
+│   └── ena-bar/           # Native GTK4 bar (Rust)
+│       ├── src/
+│       │   ├── main.rs          # GTK4 app, layer-shell setup
+│       │   ├── bar.rs           # Widget tree, state machine
+│       │   ├── ipc.rs           # Unix socket client
+│       │   ├── command_palette.rs    # Context-aware command suggestions
+│       │   ├── restoration_ui.rs     # Workspace restoration widget
+│       │   ├── orchestration_ui.rs   # Execution plan timeline
+│       │   ├── ambient_ui.rs         # Ambient suggestions
+│       │   ├── welcome_overlay.rs    # First-run onboarding
+│       │   ├── timing.rs         # Interaction latency instrumentation
+│       │   ├── audio.rs          # Audio capture stub
+│       │   ├── config.rs         # CLI args
+│       │   └── style.css         # Dark theme
+│       └── Cargo.toml
+│
+├── apps/                  # Tauri + React bar (legacy/alternative)
+├── packages/              # Shared types, design system
+├── docs/                  # Architecture, quickstart, changelog
+└── scripts/               # Deploy scripts
 ```
 
-## 1.2 Technology Stack Decisions
+## 1.2 Technology Stack
 
-### Systems & Performance Critical (Rust)
-- **Why:** Memory safety, predictable latency (no GC pauses), exceptional concurrency.
-- **Where:** `/core`, `/shell/compositor`, `/system-services`, `/agent-engine/sandbox`.
-- **Tools:** `tokio` for async, `tonic` for gRPC/IPC, `tracing` for observability.
+### Runtime
+| Component | Language | Framework | Persistence | IPC |
+|-----------|----------|-----------|-------------|-----|
+| **Daemon (enad)** | Rust | tokio | SQLite (rusqlite, bundled) | Unix socket (JSON line) |
+| **GTK4 Bar (ena-bar)** | Rust | gtk4-rs, gtk4-layer-shell | None (stateless renderer) | Unix socket client |
+| **AI Runtime** | Python 3.11+ | FastAPI, uvicorn | None (in-memory sessions) | Unix socket → enad |
 
-### AI Runtime & Orchestration (Python)
-- **Why:** De facto standard for AI ecosystems, native support for ML libraries, rapid agent iteration.
-- **Where:** `/ai-runtime`, `/workflow-engine`, portions of `/agent-engine`.
-- **Tools:** `FastAPI` for internal services, `LangChain`/`LlamaIndex` concepts (custom built for low latency), `Playwright` for browser automation.
+### Desktop Integration
+| Subsystem | Integration | Backend |
+|-----------|-------------|---------|
+| Battery | D-Bus | zbus (org.freedesktop.UPower) |
+| Network | D-Bus | zbus (org.freedesktop.NetworkManager) |
+| Window Focus | External tools | swaymsg / hyprctl / gdbus / xprop fallback |
+| Workspace | External tools | swaymsg / hyprctl |
+| Clipboard | External tools | wl-paste / xclip (polling) |
+| Audio | External tools + D-Bus | pactl + MPRIS signal subscription |
+| Notifications | D-Bus | zbus (org.freedesktop.Notifications) |
 
-### Desktop Shell & UI (TypeScript + Rust/Tauri OR GTK4)
-- **Decision:** Hybrid approach. We use **Tauri (Rust + React/TypeScript)** for the Ena Bar to allow rapid UI iteration and rich interactive components, while utilizing **GTK4/libadwaita** for native OS applications (Settings, Files) to maintain standard Linux desktop feel.
-- **Compositor:** Wayland-native, potentially building on wlroots or Smithay (Rust) to ensure deep integration with the AI's spatial awareness of windows.
+### IPC Protocol
+- **Transport:** Unix domain socket
+- **Format:** Line-delimited JSON
+- **Encoding:** Adjacently-tagged serde enums (`{"kind": {"type": "...", "body": ...}}`)
+- **Message types:** Command, Response, Event, Subscribe, Ping, Pong
+- **Latency:** < 1ms P99 (localhost Unix socket)
+- **Tests:** 71 round-trip, wire-format, and integration tests
 
-### Data Layer
-- **Relational & Vector:** PostgreSQL with `pgvector`. Provides robust transactional guarantees for system state and high-performance similarity search for AI memory.
-- **Event Bus / Queues:** Redis (or NATS). High throughput, low latency pub/sub for cross-component messaging (e.g., Ena Bar sending a command to the Workflow Engine).
+## 1.3 Architectural Principles
 
-### Local Inference
-- **Engine:** Ollama integrated natively. EnaOS ships with local LLMs (e.g., Llama 3 or Mistral) for privacy-preserving, offline-capable core OS functions.
+### Daemon-Driven Architecture
+The frontend is a thin reactive renderer. All business logic lives in `enad`:
+- Event bus, IPC server, desktop integration
+- Orchestration engine, snapshot/restore
+- Command intelligence, ambient suggestions
+- First-run management, memory
 
-## 1.3 Development Environment Setup & Container Strategy
-- **NixOS & Flakes:** The primary source of truth for the dev environment. `flake.nix` defines exact versions of Rust, Python, Node, Postgres, and Wayland dependencies. This guarantees "works on my machine" consistency.
-- **Docker/Podman:** Used for isolating AI agents. When an agent needs to execute potentially unsafe Python code or interact with a headless browser, it spins up a highly constrained ephemeral container.
-- **direnv:** Automatically loads the Nix environment upon entering the directory.
+### Real State Only
+No simulated UI, no fake workflows. Every bar element reflects actual OS state:
+- Status dot: green = connected, grey = disconnected
+- Context label: shows only actively tracked state
+- Action bar: shows real execution results from enad
 
-## 1.4 Build System & CI/CD
-- **Build System:** `just` (Justfile) for task running. Cargo for Rust, Poetry for Python, pnpm for TypeScript.
-- **CI/CD:** GitHub Actions or GitLab CI.
-  - **Gates:** `cargo clippy`, `rustfmt`, `ruff` (Python), `eslint`, `tsc`.
-  - **Testing:** Unit tests per language, Integration tests spinning up the IPC event bus and simulating Ena Bar commands.
-  - **Artifacts:** Nightly AppImages/Flatpaks for UI components, and raw binaries for system daemons.
+### Graceful Degradation
+If a subsystem is unavailable, it logs and exits cleanly — enad never crashes:
+- D-Bus service unavailable → log warning, continue
+- AI runtime unavailable → bar works without AI features
+- macOS → layer-shell disabled, floating window fallback
 
-## 1.5 Git Strategy
-- **Trunk-Based Development:** Short-lived feature branches branching from `main`.
-- **Conventional Commits:** Required for automated changelog generation and semantic versioning of the SDKs.
-- **Monorepo Tooling:** `turborepo` or `cargo-workspace` to only build and test affected DAG dependencies on PRs.
+### Compositor-Agnostic
+Window tracking uses a fallback chain: Sway → Hyprland → GNOME → generic wmctrl/xprop
+
+## 1.4 Key Files
+
+| File | Purpose |
+|------|---------|
+| `runtimes/enad/src/main.rs` | Daemon entry point, subsystem wiring |
+| `runtimes/enad/src/bus.rs` | Event bus (tokio broadcast) |
+| `runtimes/enad/src/server.rs` | Unix socket IPC server |
+| `runtimes/enad/src/types/ipc.rs` | IPC message types (IpcMessage, Command, Response) |
+| `runtimes/enad/src/types/events.rs` | System event types (EventKind, EventPayload) |
+| `shell/ena-bar/src/bar.rs` | GTK4 widget tree and state machine |
+| `shell/ena-bar/src/ipc.rs` | Unix socket IPC client |
+| `shell/ena-bar/src/welcome_overlay.rs` | First-run onboarding widget |
+| `shell/ena-bar/src/style.css` | Dark theme stylesheet |
+| `runtimes/ai-runtime/src/main.py` | AI runtime entry point |
+
+## 1.5 Build System
+
+### Rust Components
+- No workspace — each crate builds independently
+- Release profile: `lto = true`, `codegen-units = 1`, `opt-level = 2`
+- Conditional dependencies via `cfg(target_os = "linux")` for `gtk4-layer-shell`, `zbus`, `nix`
+- Feature flags: `timing = []` for instrumentation, `desktop_integration` CLI arg
+
+### Python Components
+- Standard `pip install -r requirements.txt`
+- Virtual environment recommended: `python3 -m venv .venv`
+
+### Tests
+- 71 tests total (3 pre-existing, 68 added in Stabilization Sprints)
+- IPC round-trip serde tests for all message types
+- Wire-format compatibility tests with bar JSON construction
+- Integration tests with real IPC server
+
+## 1.6 Git Strategy
+- Trunk-based development: short-lived branches from `main`
+- Conventional commits: `feat:` / `fix:` / `docs:` / `refactor:` / `test:`
+- PRs require at least one review

@@ -1,45 +1,139 @@
-# 2. System Architecture & Boundaries
+# 2. System Architecture & Service Boundaries
+
+> **Status:** Accurate as of v0.1.0-developer-preview
+> **Last verified:** June 2026
 
 ## 2.1 Service Boundaries
-EnaOS is built on a microkernel-inspired service architecture. Services run as independent processes (daemons) managed by Systemd, communicating over a structured Event Bus and IPC layer.
 
-1. **Ena Shell / Compositor:** Handles window rendering, input events, and Wayland protocol.
-2. **Ena Bar:** The user-facing overlay. Entirely decoupled from the compositor, running as a specialized Wayland layer-shell client.
-3. **Core OS Daemon (`enad`):** The central privileged service handling system automation, D-Bus bridging, and hardware access.
-4. **AI Runtime (`ena-ai`):** Unprivileged Python daemon handling NLP, embeddings, and provider routing.
-5. **Agent Orchestrator:** Manages lifecycle of autonomous agents, spinning up sandboxes.
-6. **Memory Engine:** Abstracted database access layer.
+EnaOS follows a **strictly daemon-driven architecture** with precisely three components:
 
-## 2.2 Inter-Process Communication (IPC) & Event Architecture
+| Component | Language | Runtime | Privilege | Persistence |
+|-----------|----------|---------|-----------|-------------|
+| **enad** (core daemon) | Rust | tokio | System-level | SQLite (bundled) |
+| **ena-bar** (GTK4 frontend) | Rust | GTK4 loop | User-level | None (stateless) |
+| **AI Runtime** | Python | FastAPI/uvicorn | User-level | In-memory sessions |
 
-### The Dual-Layer Strategy
-We employ a two-tiered communication strategy depending on the requirement.
+### Enad — The Single Privileged Daemon
 
-1. **gRPC / Protocol Buffers (Synchronous, Point-to-Point)**
-   - Used for hard contracts, request/response cycles.
-   - Example: Ena Bar requests the AI Runtime to generate a response, waiting for the stream.
-   - Example: Shell requests Auth daemon to verify a fingerprint.
-   - **Why:** Strongly typed, auto-generated SDKs across Rust/Python/TS, extremely fast.
+`enad` is the **only** component with system access. It owns:
+- Unix socket IPC server (`server.rs`)
+- tokio broadcast event bus (`bus.rs`)
+- 7 desktop integration subsystems (UPower, NetworkManager, window focus, workspace, clipboard, notifications, audio/MPRIS)
+- Process lifecycle management (`process.rs`)
+- Action execution (`actions/executor.rs`)
+- DAG-based orchestration engine (`orchestration/engine.rs`)
+- Workspace snapshot store (`snapshot/store.rs`)
+- Restoration planner (`restore/plan.rs`)
+- Contextual command intelligence engine (`context/`)
+- Ambient suggestion engine (`suggestion/`)
+- Working memory store (`memory/store.rs`)
+- First-run onboarding manager (`first_run.rs`)
 
-2. **Event Bus - NATS / Redis Pub/Sub (Asynchronous, Broadcast)**
-   - Used for state changes, broadcast events, and decoupling.
-   - Example: Compositor publishes `WindowFocusChanged(app="browser")`. AI Runtime listens to this to update the user's active context in the Memory Engine.
-   - Example: Agent publishes `TaskProgress(percent=50)`. Ena Bar listens to update the UI without needing to poll the Agent.
+### Ena-bar — The Stateless Renderer
 
-## 2.3 State Management Approach
-State in EnaOS is heavily distributed but globally queryable.
-- **UI State:** Handled locally within the Ena Bar (React/Zustand) or GTK apps.
-- **System State:** Owned by `enad` and exposed via gRPC.
-- **Contextual/AI State:** This is the core innovation. A rolling window of the user's last X minutes of activity (screen OCR, active window, typed text) is maintained in-memory (Redis) and periodically flushed to the Vector/Relational DB for long-term semantic retrieval.
+`ena-bar` is a thin GTK4 application with **zero business logic**:
+- Connects to enad via Unix socket
+- Renders system state as widgets (status dot, context label, command palette, restoration suggestion, ambient suggestions, orchestration timeline)
+- Never invents state — every widget corresponds to a real daemon event
+
+### AI Runtime — The Inference Layer
+
+The AI Runtime is an **optional** Python FastAPI server:
+- Connects to enad via Unix socket bridge
+- Maintains a live DesktopState from enad events
+- Routes queries to local Ollama or cloud API (configured)
+- Streams responses via SSE
+- Generates structured execution plans from natural language
+- Never executes OS commands directly — always routes through enad
+
+## 2.2 Inter-Process Communication
+
+### Transport: Unix Domain Socket
+
+All communication uses a **single Unix domain socket** with **line-delimited JSON**.
+
+### Protocol: Adjacently-Tagged Enums
+
+Every message follows the structure:
+
+```json
+{"id": "uuid", "kind": {"type": "MessageType", "body": ...}}
+```
+
+Message types:
+- **Command** — Client → Server requests (22 variants)
+- **Response** — Server → Client replies (Ok, Data, Error)
+- **Event** — Server → Client push events (28 EventPayload variants)
+- **Subscribe** — Client subscription to event kinds
+- **Ping / Pong** — Keepalive heartbeat
+
+### No gRPC, HTTP, SSE, WebSocket, or Event Bus Services
+
+EnaOS deliberately avoids:
+- gRPC — unnecessary overhead for single-machine IPC
+- HTTP/REST — adds latency, requires server implementation
+- WebSocket/SSE — Unix socket JSON lines are simpler and faster
+- Redis/NATS — no distributed event bus needed for single-machine operation
+
+## 2.3 State Management
+
+### Frontend (ena-bar)
+- **Stateless** — all state comes from enad events
+- Widget states derived from latest event data
+- No local persistence
+
+### Daemon (enad)
+- **Three SQLite databases** in `~/.local/share/enad/`:
+  - `snapshots.db` — workspace snapshots (WAL mode)
+  - `memory.db` — working memory with FTS5 search
+  - `suggestions.db` — ambient suggestion store
+- **In-memory state**: event bus state, active orchestration plans, current desktop context
+
+### AI Runtime
+- **In-memory sessions** — conversation history per session
+- **No persistence** — sessions lost on restart (future: persistence)
 
 ## 2.4 Desktop Shell Architecture
-EnaOS is not just a skin over GNOME. It is a custom Wayland environment.
-- **Compositor Engine:** Built on `Smithay` (Rust). It provides full control over window placement.
-- **AI Spatial Awareness:** The compositor exposes an API that allows the AI to query the screen coordinate graph. The AI can highlight windows, draw overlays, or move applications.
-- **Layer Shell:** The Ena Bar uses `wlr-layer-shell` to anchor itself to the bottom of the screen, bypassing normal window management rules to appear omnipresent.
 
-## 2.5 System Daemon Structure (`enad`)
-The `enad` daemon acts as the bridge between standard Linux systems (Systemd, D-Bus, udev) and the AI ecosystem.
-- **D-Bus Proxy:** It listens to D-Bus signals (e.g., NetworkManager, UPower) and translates them into EnaOS Pub/Sub events.
-- **Automation Executor:** If the AI decides to "Turn off Wi-Fi", it sends a gRPC command to `enad`, which safely executes the required privileged `nmcli` or D-Bus call.
-- **Privilege Separation:** `enad` is the ONLY component running as root. AI models and agents run as restricted users and MUST request actions through `enad`'s validated gRPC endpoints.
+### Wayland Layer-Shell
+- `ena-bar` uses `gtk4-layer-shell` protocol to anchor to the bottom of the screen
+- Layer: Overlay (`set_layer(Overlay)`)
+- Exclusive zone: -1 (bar sits above normal windows as an overlay)
+- Keyboard mode: OnDemand (focusable but doesn't steal focus)
+
+### Compositor Support
+- GNOME (Mutter) — works with [gtk4-layer-shell extension](https://github.com/wmww/gtk4-layer-shell)
+- Sway — native wlr-layer-shell support
+- Hyprland — native wlr-layer-shell support
+- macOS — development-only fallback (floating window, no layer-shell)
+
+### No Custom Compositor
+EnaOS **does not ship a custom Wayland compositor**. It runs on top of existing compositors and integrates via layer-shell and external tools.
+
+## 2.5 AI Runtime Architecture
+
+The AI Runtime is **not** a daemon managed by enad — it's a standalone Python FastAPI server that:
+1. Connects to enad via Unix socket (bridge/enad.py)
+2. Subscribes to all event kinds
+3. Maintains a live `DesktopState` from received events
+4. Provides HTTP endpoints: `/chat`, `/chat/stream` (SSE), `/health`, `/context`, `/memory`, `/action`, `/orchestrate`
+5. Integrates with Ollama for local inference
+6. Uses enad for all system actions (never executes directly)
+
+```text
+┌─────────┐   Unix Socket    ┌──────────┐   HTTP/SSE    ┌──────────┐
+│  enad   │ ◄──────────────► │ AI       │ ◄───────────► │  Ollama  │
+│ (Rust)  │                  │ Runtime  │               │ (local)  │
+│         │                  │ (Python) │               └──────────┘
+│ events  │                  │          │
+│ actions │                  └──────────┘
+└─────────┘                       │
+                                  │ HTTP/SSE
+                                  ▼
+                            ┌──────────┐
+                            │ ena-bar  │
+                            │ (GTK4)   │
+                            └──────────┘
+```
+
+> **Key invariant:** The AI Runtime never directly manipulates the OS. All actions are routed through enad's validated IPC endpoints.

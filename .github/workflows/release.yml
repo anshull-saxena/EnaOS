@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # e.g., v0.1.0-developer-preview
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build release binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install GTK4 + layer-shell deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgtk-4-dev libadwaita-1-dev pkg-config
+          sudo apt-get install -y -qq libgtk4-layer-shell-dev 2>/dev/null || true
+
+      - name: Build enad
+        run: cargo build --release --manifest-path runtimes/enad/Cargo.toml
+
+      - name: Build ena-bar
+        run: cargo build --release --manifest-path shell/ena-bar/Cargo.toml
+
+      - name: Run enad tests
+        run: cargo test --manifest-path runtimes/enad/Cargo.toml
+
+      - name: Extract version from tag
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            # Extract the latest changelog entry (up to the next ##)
+            awk '/^## /{if(++c==2) exit} 1' CHANGELOG.md > /tmp/release-notes.md
+          else
+            echo "Release ${{ steps.version.outputs.tag }}" > /tmp/release-notes.md
+          fi
+          echo "path=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Package binary tarball
+        run: |
+          mkdir -p /tmp/enaos-release
+          cp runtimes/enad/target/release/enad /tmp/enaos-release/
+          cp shell/ena-bar/target/release/ena-bar /tmp/enaos-release/
+          cp install.sh /tmp/enaos-release/
+          cp CHANGELOG.md /tmp/enaos-release/
+          cd /tmp
+          tar czf enaos-${{ steps.version.outputs.tag }}-x86_64-linux.tar.gz enaos-release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: EnaOS ${{ steps.version.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            /tmp/enaos-${{ steps.version.outputs.tag }}-x86_64-linux.tar.gz
+          prerelease: ${{ contains(github.ref_name, 'preview') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+          generate_release_notes: false

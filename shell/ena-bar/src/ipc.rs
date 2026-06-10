@@ -13,11 +13,17 @@ use uuid::Uuid;
 use crate::command_palette::CommandSuggestion;
 
 // ── IPC Protocol (matches enad's types/ipc.rs) ───────────────────
+//
+// Envelope format:
+//   Bar → Daemon:  {"id": "...", "kind": {"type": "Command", "body": <command>}}
+//   Daemon → Bar:  {"id": "...", "kind": {"type": "Event" | "Response", "body": <body>}}
+//
+// The `kind` field is a nested object (NOT flattened) so that enad's
+// IpcMessage deserialization (which expects `kind` as a field) works.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IpcMessage {
     id: Uuid,
-    #[serde(flatten)]
     kind: MessageKind,
 }
 
@@ -199,23 +205,12 @@ fn send_ping(writer: &mut UnixStream) {
     }
 }
 
-/// Send a command to enad and wait for a response.
-///
-/// Opens a fresh Unix socket connection, sends the command,
-/// reads one response line, and returns the parsed JSON.
-/// This is a blocking call — use from a background thread or
-/// keep the response fast (Unix socket latency is sub-ms).
 /// Send a unit-variant command to enad (e.g. GetFirstRunStatus, CompleteOnboarding).
+///
+/// Opens a fresh Unix socket connection, sends the command with the
+/// correct `{"kind": {"type": "Command", "body": "CommandName"}}` envelope.
 pub fn send_unit_command(socket_path: &str, command: &str) -> Result<Value, String> {
-    // Unit variants serialize as {"VariantName": null} with external tagging.
-    let body = json!({ command: null });
-    send_command(socket_path, command, &body)
-}
-
-/// Send a command to enad with an object body.
-pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Value, String> {
     let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
-    // Set a read timeout so we don't block forever.
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
@@ -223,11 +218,47 @@ pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Va
     let mut writer = stream.try_clone().map_err(|e| format!("clone: {e}"))?;
     let mut reader = BufReader::new(stream);
 
+    // Unit variants serialize as just the command name string in the body.
+    // Full wire format: {"id": "...", "kind": {"type": "Command", "body": "CommandName"}}
     let msg = json!({
         "id": Uuid::new_v4(),
-        "type": "Command",
-        "body": {
-            command: body
+        "kind": {
+            "type": "Command",
+            "body": command
+        }
+    });
+
+    let json = serde_json::to_string(&msg).map_err(|e| format!("serialize: {e}"))?;
+    writeln!(writer, "{json}").map_err(|e| format!("write: {e}"))?;
+    writer.flush().map_err(|e| format!("flush: {e}"))?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+
+    serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))
+}
+
+/// Send a struct-variant command to enad with an object body.
+///
+/// Wire format:
+///   {"id": "...", "kind": {"type": "Command", "body": {"CommandName": <body>}}}
+pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Value, String> {
+    let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
+
+    let mut writer = stream.try_clone().map_err(|e| format!("clone: {e}"))?;
+    let mut reader = BufReader::new(stream);
+
+    // Proper envelope: command wrapped in kind field with tag+content.
+    let msg = json!({
+        "id": Uuid::new_v4(),
+        "kind": {
+            "type": "Command",
+            "body": {
+                command: body
+            }
         }
     });
 
@@ -243,8 +274,11 @@ pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Va
 
 /// Fetch context-aware command suggestions from enad.
 ///
-/// Opens a fresh Unix socket, sends GetContextCommands,
-/// parses the response payload into a Vec<CommandSuggestion>.
+/// Opens a fresh Unix socket, sends GetContextCommands using the correct
+/// wire envelope, parses the response into a Vec<CommandSuggestion>.
+///
+/// Response wire format:
+///   {"id": "...", "kind": {"type": "Response", "body": {"Data": {"payload": {"commands": [...], "context": {...}}}}}}
 pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Result<Vec<CommandSuggestion>, String> {
     let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
     stream
@@ -254,13 +288,16 @@ pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Resul
     let mut writer = stream.try_clone().map_err(|e| format!("clone: {e}"))?;
     let mut reader = BufReader::new(stream);
 
+    // Correct envelope: kind → { type, body } → { GetContextCommands: {...} }
     let msg = json!({
         "id": Uuid::new_v4(),
-        "type": "Command",
-        "body": {
-            "GetContextCommands": {
-                "query": query,
-                "limit": limit
+        "kind": {
+            "type": "Command",
+            "body": {
+                "GetContextCommands": {
+                    "query": query,
+                    "limit": limit
+                }
             }
         }
     });
@@ -274,15 +311,20 @@ pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Resul
 
     let response: Value = serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))?;
 
-    // Extract suggestions from response payload.
-    if let Some(body) = response.get("body") {
-        if let Some(payload) = body.get("payload") {
-            if let Some(suggestions) = payload.as_array() {
-                let parsed: Result<Vec<CommandSuggestion>, _> = suggestions
-                    .iter()
-                    .map(|s| serde_json::from_value(s.clone()))
-                    .collect();
-                return parsed.map_err(|e| format!("parse_suggestions: {e}"));
+    // Navigate: kind → body → Data → payload → commands
+    if let Some(kind) = response.get("kind") {
+        if let Some(body) = kind.get("body") {
+            // body is { "Data": { "payload": { "commands": [...], "context": {...} } } }
+            if let Some(data_body) = body.get("Data") {
+                if let Some(payload) = data_body.get("payload") {
+                    if let Some(commands) = payload.get("commands").and_then(|c| c.as_array()) {
+                        let parsed: Result<Vec<CommandSuggestion>, _> = commands
+                            .iter()
+                            .map(|s| serde_json::from_value(s.clone()))
+                            .collect();
+                        return parsed.map_err(|e| format!("parse_suggestions: {e}"));
+                    }
+                }
             }
         }
     }
@@ -290,75 +332,64 @@ pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Resul
     Ok(Vec::new())
 }
 
+/// Parse an incoming IPC message (JSON Value) into an EnadEvent.
+///
+/// Enad's wire format:
+///   {"id": "...", "kind": {"type": "Event | Response | Pong", "body": ...}}
+///
+/// We navigate via the top-level "kind" field, not flattened fields.
 fn parse_event(json: Value) -> EnadEvent {
-    // Try to parse as IpcMessage first.
-    if let Some(msg_type) = json.get("type").and_then(|v| v.as_str()) {
-        match msg_type {
-            "Pong" => {
-                return EnadEvent::Pong { latency_ms: 0 };
-            }
-            "Event" => {
-                // Extract the SystemEvent from the body.
-                if let Some(body) = json.get("body") {
-                    // The event kind (Window, System, Audio, etc.)
-                    let kind = body
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-
-                    // The payload contains { "type": "...", "data": {...} }
-                    // We want to pass the full payload so the bar can extract type + data.
-                    let payload = body.get("payload").cloned().unwrap_or(Value::Null);
-
-                    return EnadEvent::SystemEvent { kind, payload };
+    // Check the "type" discriminator under "kind".
+    if let Some(kind_val) = json.get("kind") {
+        if let Some(msg_type) = kind_val.get("type").and_then(|v| v.as_str()) {
+            match msg_type {
+                "Pong" => {
+                    return EnadEvent::Pong { latency_ms: 0 };
                 }
-            }
-            "Response" => {
-                // Check if it's a response to a ping (PONG).
-                if let Some(body) = json.get("body") {
-                    if let Some(code) = body.get("code").and_then(|v| v.as_str()) {
-                        if code == "PONG" {
-                            let latency = body
-                                .get("latency_ms")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            return EnadEvent::Pong { latency_ms: latency };
-                        }
+                "Event" => {
+                    // Extract the SystemEvent from kind.body.
+                    if let Some(body) = kind_val.get("body") {
+                        // The event kind (Window, System, Audio, etc.)
+                        let event_kind = body
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        // The payload is the body's "payload" field.
+                        let payload = body.get("payload").cloned().unwrap_or(Value::Null);
+
+                        return EnadEvent::SystemEvent { kind: event_kind, payload };
                     }
                 }
+                "Response" => {
+                    // Check if it's a response to a ping (PONG).
+                    if let Some(body) = kind_val.get("body") {
+                        // body is { "Ok": { ... } } or { "Data": { ... } } or { "Error": { ... } }
+                        // Pong responses have payload.code == "PONG" inside the Data variant.
+                        if let Some(data) = body.get("Data") {
+                            if let Some(payload) = data.get("payload") {
+                                if let Some(code) = payload.get("code").and_then(|v| v.as_str()) {
+                                    if code == "PONG" {
+                                        let latency = payload
+                                            .get("latency_ms")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0);
+                                        return EnadEvent::Pong { latency_ms: latency };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Non-pong responses are returned as Raw — the bar doesn't
+                    // route them through the event stream.
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
-    // Fallback: try the old flat format for backwards compatibility.
-    match json.get("kind").and_then(|k| k.as_str()) {
-        Some("pong") => {
-            let latency = json
-                .get("payload")
-                .and_then(|p| p.get("latency_ms"))
-                .and_then(|l| l.as_u64())
-                .unwrap_or(0);
-            EnadEvent::Pong { latency_ms: latency }
-        }
-        Some(kind) => {
-            let payload = json.get("payload").cloned().unwrap_or(Value::Null);
-            EnadEvent::SystemEvent {
-                kind: kind.to_string(),
-                payload,
-            }
-        }
-        None => {
-            // Try to extract from nested structure.
-            let kind = json
-                .get("payload")
-                .and_then(|p| p.get("kind"))
-                .and_then(|k| k.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let payload = json.get("payload").cloned().unwrap_or(json);
-            EnadEvent::SystemEvent { kind, payload }
-        }
-    }
+    // Fallback: parse_event is only called for messages on the persistent
+    // event subscription socket. Unrecognised messages go to Raw.
+    EnadEvent::Raw(format!("{}", json))
 }

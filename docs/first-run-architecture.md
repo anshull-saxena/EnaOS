@@ -1,5 +1,8 @@
 # First-Run Experience — EnaOS
 
+> **Status:** Accurate as of v0.1.0-developer-preview
+> Describes the actual first-run onboarding implementation.
+
 ## Architecture Overview
 
 The first-run experience spans two subsystems:
