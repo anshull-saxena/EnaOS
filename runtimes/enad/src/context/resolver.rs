@@ -57,7 +57,7 @@ impl CommandResolver {
         &self,
         query: &str,
         ctx: &AggregatedContext,
-        intent: &ClassifiedIntent,
+        _intent: &ClassifiedIntent,
     ) -> Vec<CommandSuggestion> {
         let mut results = Vec::new();
 
@@ -67,7 +67,7 @@ impl CommandResolver {
 
             // Only surface if there's some relevance or intent match.
             if similarity > 0.1
-                || matches!(intent.intent_type, IntentType::Continue | IntentType::Restore)
+                || matches!(_intent.intent_type, IntentType::Continue | IntentType::Restore)
             {
                 let subtitle = match plan.status.as_str() {
                     "PendingApproval" => "Requires approval".to_string(),
@@ -96,7 +96,7 @@ impl CommandResolver {
         &self,
         query: &str,
         ctx: &AggregatedContext,
-        intent: &ClassifiedIntent,
+        _intent: &ClassifiedIntent,
     ) -> Vec<CommandSuggestion> {
         let mut results = Vec::new();
 
@@ -105,7 +105,7 @@ impl CommandResolver {
             let similarity = fuzzy_score(query, &label_lower);
 
             if similarity > 0.1
-                || matches!(intent.intent_type, IntentType::Restore | IntentType::Continue)
+                || matches!(_intent.intent_type, IntentType::Restore | IntentType::Continue)
             {
                 results.push(CommandSuggestion {
                     id: Uuid::new_v4().to_string(),
@@ -276,7 +276,7 @@ fn fuzzy_score(query: &str, target: &str) -> f64 {
     let target_lower = target.to_lowercase();
 
     let mut matched = 0;
-    let mut total = query_tokens.len();
+    let total = query_tokens.len();
 
     for token in &query_tokens {
         let token_lower = token.to_lowercase();

@@ -32,19 +32,19 @@ use crate::types::events::{EventKind, EventPayload, SystemEvent};
 )]
 trait DisplayDevice {
     #[zbus(property)]
-    fn percentage(&self) -> f64;
+    fn percentage(&self) -> zbus::Result<f64>;
 
     #[zbus(property)]
-    fn state(&self) -> u32;
+    fn state(&self) -> zbus::Result<u32>;
 
     #[zbus(property)]
-    fn time_to_empty(&self) -> i64;
+    fn time_to_empty(&self) -> zbus::Result<i64>;
 
     #[zbus(property)]
-    fn time_to_full(&self) -> i64;
+    fn time_to_full(&self) -> zbus::Result<i64>;
 
     #[zbus(property)]
-    fn is_present(&self) -> bool;
+    fn is_present(&self) -> zbus::Result<bool>;
 }
 
 fn state_label(state: u32) -> &'static str {

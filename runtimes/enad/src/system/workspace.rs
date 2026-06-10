@@ -16,7 +16,7 @@ use crate::bus::EventBus;
 use crate::types::events::{EventKind, EventPayload, SystemEvent};
 
 /// Detect the running compositor type.
-fn detect_compositor() -> &str {
+fn detect_compositor() -> &'static str {
     if std::env::var("SWAYSOCK").is_ok() {
         return "sway";
     }

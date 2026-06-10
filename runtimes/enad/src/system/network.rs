@@ -30,13 +30,13 @@ use crate::types::events::{EventKind, EventPayload, SystemEvent};
 )]
 trait NetworkManagerInterface {
     #[zbus(property)]
-    fn state(&self) -> u32;
+    fn state(&self) -> zbus::Result<u32>;
 
     #[zbus(property)]
-    fn connectivity(&self) -> u32;
+    fn connectivity(&self) -> zbus::Result<u32>;
 
     #[zbus(property)]
-    fn active_connections(&self) -> Vec<zbus::zvariant::OwnedObjectPath>;
+    fn active_connections(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
 }
 
 #[proxy(
@@ -45,10 +45,10 @@ trait NetworkManagerInterface {
 )]
 trait ActiveConnection {
     #[zbus(property)]
-    fn id(&self) -> String;
+    fn id(&self) -> zbus::Result<String>;
 
     #[zbus(property)]
-    fn devices(&self) -> Vec<zbus::zvariant::OwnedObjectPath>;
+    fn devices(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
 }
 
 #[proxy(
@@ -57,7 +57,7 @@ trait ActiveConnection {
 )]
 trait WirelessDevice {
     #[zbus(property)]
-    fn active_access_point(&self) -> zbus::zvariant::OwnedObjectPath;
+    fn active_access_point(&self) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
 }
 
 #[proxy(
@@ -66,10 +66,10 @@ trait WirelessDevice {
 )]
 trait AccessPoint {
     #[zbus(property)]
-    fn ssid(&self) -> Vec<u8>;
+    fn ssid(&self) -> zbus::Result<Vec<u8>>;
 
     #[zbus(property)]
-    fn strength(&self) -> u8;
+    fn strength(&self) -> zbus::Result<u8>;
 }
 
 fn state_label(state: u32) -> (&'static str, bool) {

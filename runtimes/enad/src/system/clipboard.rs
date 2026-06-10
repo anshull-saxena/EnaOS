@@ -104,10 +104,9 @@ async fn get_clipboard_wl_paste() -> Result<String, ()> {
         .map_err(|_| ())?;
 
     if output.status.success() {
-        String::from_utf8_lossy(&output.stdout)
+        Ok(String::from_utf8_lossy(&output.stdout)
             .trim()
-            .to_string()
-            .into()
+            .to_string())
     } else {
         Err(())
     }
@@ -154,10 +153,9 @@ async fn get_clipboard_xclip() -> Result<String, ()> {
         .map_err(|_| ())?;
 
     if output.status.success() {
-        String::from_utf8_lossy(&output.stdout)
+        Ok(String::from_utf8_lossy(&output.stdout)
             .trim()
-            .to_string()
-            .into()
+            .to_string())
     } else {
         Err(())
     }

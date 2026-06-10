@@ -279,8 +279,8 @@ async fn get_mpris_state(
     // Get PlaybackStatus and Metadata via Get method.
     let msg = conn
         .call_method(
-            Some(&dest),
-            &path,
+            Some(dest.as_str()),
+            path.as_str(),
             Some("org.freedesktop.DBus.Properties"),
             "Get",
             &("org.mpris.MediaPlayer2.Player", "PlaybackStatus"),
@@ -298,8 +298,8 @@ async fn get_mpris_state(
     // Get metadata.
     let msg = conn
         .call_method(
-            Some(&dest),
-            &path,
+            Some(dest.as_str()),
+            path.as_str(),
             Some("org.freedesktop.DBus.Properties"),
             "Get",
             &("org.mpris.MediaPlayer2.Player", "Metadata"),

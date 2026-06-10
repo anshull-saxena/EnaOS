@@ -28,10 +28,10 @@ use crate::types::events::{EventKind, EventPayload, SystemEvent};
 )]
 trait NotificationsInterface {
     /// Get server information.
-    fn get_server_information(&self) -> (String, String, String, String);
+    fn get_server_information(&self) -> zbus::Result<(String, String, String, String)>;
 
     /// Get capabilities.
-    fn get_capabilities(&self) -> Vec<String>;
+    fn get_capabilities(&self) -> zbus::Result<Vec<String>>;
 }
 
 /// Urgency levels from notification hints.

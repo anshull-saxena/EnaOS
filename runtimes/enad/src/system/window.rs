@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::bus::EventBus;
 use crate::types::events::{EventKind, EventPayload, SystemEvent};
@@ -73,7 +73,7 @@ async fn run_gnome_shell(bus: Arc<EventBus>) -> bool {
 
     info!("Window watcher: trying GNOME Shell D-Bus...");
 
-    let conn = match Connection::session().await {
+    let _conn = match Connection::session().await {
         Ok(c) => c,
         Err(_) => {
             info!("Window watcher: GNOME Shell D-Bus not available");

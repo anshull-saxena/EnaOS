@@ -15,7 +15,7 @@ use crate::restore::plan::RestorePlanner;
 use crate::restore::types::{RestoreSelections, RestoreResult};
 use crate::suggestion::engine::SuggestionEngine;
 use crate::context::ContextEngine;
-use crate::first_run::{self, FirstRunManager, create_demo_snapshot, create_demo_orchestration_plan};
+use crate::first_run::{FirstRunManager, create_demo_snapshot, create_demo_orchestration_plan};
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
