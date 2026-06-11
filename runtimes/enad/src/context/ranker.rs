@@ -1,3 +1,4 @@
+use super::CommandSuggestion;
 /// CommandRanker — scores and ranks command suggestions.
 ///
 /// Scoring formula:
@@ -10,9 +11,7 @@
 /// Confidence thresholding:
 ///   If top_score < CONFIDENCE_THRESHOLD → return empty list.
 ///   Sparse, high-confidence suggestions are more valuable than noisy lists.
-
 use super::classifier::ClassifiedIntent;
-use super::CommandSuggestion;
 
 /// Minimum score for a suggestion to be shown.
 const CONFIDENCE_THRESHOLD: f64 = 0.30;
@@ -50,11 +49,11 @@ impl CommandRanker {
             // Recency decay: newer suggestions get a small boost.
             // For now, use a simple heuristic based on source type.
             let recency = match candidate.source.as_str() {
-                "workflow" => 0.7,   // Active plans are always recent
-                "snapshot" => 0.5,   // Snapshots are somewhat recent
-                "context" => 0.8,    // Current context is very recent
-                "action" => 0.4,     // Actions are timeless
-                "semantic" => 0.6,   // Memory entries are moderately recent
+                "workflow" => 0.7, // Active plans are always recent
+                "snapshot" => 0.5, // Snapshots are somewhat recent
+                "context" => 0.8,  // Current context is very recent
+                "action" => 0.4,   // Actions are timeless
+                "semantic" => 0.6, // Memory entries are moderately recent
                 _ => 0.3,
             };
 
@@ -84,12 +83,14 @@ impl CommandRanker {
         }
 
         // Sort by score descending.
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Deduplicate by action + params.
-        candidates.dedup_by(|a, b| {
-            a.action == b.action && a.action_params == b.action_params
-        });
+        candidates.dedup_by(|a, b| a.action == b.action && a.action_params == b.action_params);
 
         candidates
     }

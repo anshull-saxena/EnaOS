@@ -2,7 +2,6 @@
 ///
 /// Each handler executes a specific action type using native Linux tools.
 /// All handlers are async and return Result<String, String> for status reporting.
-
 use tracing::info;
 
 use crate::actions::types::ActionType;
@@ -12,7 +11,9 @@ pub async fn execute(action: &ActionType) -> Result<String, String> {
     match action {
         ActionType::OpenApp { app } => open_app(app).await,
         ActionType::OpenUrl { url } => open_url(url).await,
-        ActionType::FocusWindow { app, title } => focus_window(app.as_deref(), title.as_deref()).await,
+        ActionType::FocusWindow { app, title } => {
+            focus_window(app.as_deref(), title.as_deref()).await
+        }
         ActionType::LaunchCommand { command, args } => launch_command(command, args).await,
         ActionType::SwitchWorkspace { workspace } => switch_workspace(workspace).await,
         ActionType::SearchFiles { query, path } => search_files(query, path.as_deref()).await,
@@ -34,10 +35,10 @@ async fn open_app(app: &str) -> Result<String, String> {
         .output()
         .await;
 
-    if let Ok(output) = result {
-        if output.status.success() {
-            return Ok(format!("Launched {app}"));
-        }
+    if let Ok(output) = result
+        && output.status.success()
+    {
+        return Ok(format!("Launched {app}"));
     }
 
     // Fallback: try xdg-open.
@@ -114,7 +115,10 @@ async fn focus_window_sway(app: Option<&str>, title: Option<&str>) -> Result<Str
                 let label = app.or(title).unwrap_or("window");
                 Ok(format!("Focused {label}"))
             }
-            Ok(output) => Err(format!("Failed to focus: {}", String::from_utf8_lossy(&output.stderr))),
+            Ok(output) => Err(format!(
+                "Failed to focus: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )),
             Err(e) => Err(format!("Focus command failed: {e}")),
         }
     } else {
@@ -129,7 +133,11 @@ fn find_window_in_sway_tree(tree: &str, app: Option<&str>, title: Option<&str>) 
     None
 }
 
-fn search_sway_node(node: &serde_json::Value, app: Option<&str>, title: Option<&str>) -> Option<String> {
+fn search_sway_node(
+    node: &serde_json::Value,
+    app: Option<&str>,
+    title: Option<&str>,
+) -> Option<String> {
     let node_app = node.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
     let node_title = node.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let node_id = node.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -157,45 +165,53 @@ async fn focus_window_hyprland(app: Option<&str>, title: Option<&str>) -> Result
         .map_err(|_| "HYPRLAND_INSTANCE_SIGNATURE not set".to_string())?;
     let socket = format!("/tmp/hypr/{instance}/.socket2.sock");
 
-    use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
     let mut stream = UnixStream::connect(&socket)
         .map_err(|e| format!("Failed to connect to Hyprland socket: {e}"))?;
 
-    stream.write_all(b"j/clients")
+    stream
+        .write_all(b"j/clients")
         .map_err(|e| format!("Hyprland IPC write failed: {e}"))?;
-    stream.flush()
+    stream
+        .flush()
         .map_err(|e| format!("Hyprland IPC flush failed: {e}"))?;
 
     let mut response = String::new();
-    stream.read_to_string(&mut response)
+    stream
+        .read_to_string(&mut response)
         .map_err(|e| format!("Hyprland IPC read failed: {e}"))?;
 
-    if let Ok(clients) = serde_json::from_str::<serde_json::Value>(&response) {
-        if let Some(arr) = clients.as_array() {
-            for client in arr {
-                let client_app = client.get("class").and_then(|v| v.as_str()).unwrap_or("");
-                let client_title = client.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                let client_addr = client.get("address").and_then(|v| v.as_str()).unwrap_or("");
+    if let Ok(clients) = serde_json::from_str::<serde_json::Value>(&response)
+        && let Some(arr) = clients.as_array()
+    {
+        for client in arr {
+            let client_app = client.get("class").and_then(|v| v.as_str()).unwrap_or("");
+            let client_title = client.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let client_addr = client.get("address").and_then(|v| v.as_str()).unwrap_or("");
 
-                let match_app = app.map(|a| client_app.contains(a)).unwrap_or(true);
-                let match_title = title.map(|t| client_title.contains(t)).unwrap_or(true);
+            let match_app = app.map(|a| client_app.contains(a)).unwrap_or(true);
+            let match_title = title.map(|t| client_title.contains(t)).unwrap_or(true);
 
-                if match_app && match_title && !client_addr.is_empty() {
-                    let result = tokio::process::Command::new("hyprctl")
-                        .args(["dispatch", "focuswindow", "address", client_addr])
-                        .output()
-                        .await;
+            if match_app && match_title && !client_addr.is_empty() {
+                let result = tokio::process::Command::new("hyprctl")
+                    .args(["dispatch", "focuswindow", "address", client_addr])
+                    .output()
+                    .await;
 
-                    match result {
-                        Ok(output) if output.status.success() => {
-                            let label = app.or(title).unwrap_or("window");
-                            return Ok(format!("Focused {label}"));
-                        }
-                        Ok(output) => return Err(format!("Focus failed: {}", String::from_utf8_lossy(&output.stderr))),
-                        Err(e) => return Err(format!("Focus command failed: {e}")),
+                match result {
+                    Ok(output) if output.status.success() => {
+                        let label = app.or(title).unwrap_or("window");
+                        return Ok(format!("Focused {label}"));
                     }
+                    Ok(output) => {
+                        return Err(format!(
+                            "Focus failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        ));
+                    }
+                    Err(e) => return Err(format!("Focus command failed: {e}")),
                 }
             }
         }
@@ -205,7 +221,9 @@ async fn focus_window_hyprland(app: Option<&str>, title: Option<&str>) -> Result
 }
 
 async fn focus_window_wmctrl(app: Option<&str>, title: Option<&str>) -> Result<String, String> {
-    let search = title.or(app).ok_or("Must specify app or title".to_string())?;
+    let search = title
+        .or(app)
+        .ok_or("Must specify app or title".to_string())?;
 
     let output = tokio::process::Command::new("wmctrl")
         .args(["-l"])
@@ -245,9 +263,11 @@ async fn launch_command(command: &str, args: &[String]) -> Result<String, String
     match result {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(stdout.trim().to_string().is_empty()
-                .then(|| format!("Command executed: {command}"))
-                .unwrap_or_else(|| stdout.trim().to_string()))
+            Ok(if stdout.trim().to_string().is_empty() {
+                format!("Command executed: {command}")
+            } else {
+                stdout.trim().to_string()
+            })
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -271,7 +291,12 @@ async fn switch_workspace(workspace: &str) -> Result<String, String> {
 
         match result {
             Ok(output) if output.status.success() => return Ok(format!("Switched to {workspace}")),
-            Ok(output) => return Err(format!("Failed: {}", String::from_utf8_lossy(&output.stderr))),
+            Ok(output) => {
+                return Err(format!(
+                    "Failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
             Err(e) => return Err(format!("swaymsg failed: {e}")),
         }
     }
@@ -285,7 +310,12 @@ async fn switch_workspace(workspace: &str) -> Result<String, String> {
 
         match result {
             Ok(output) if output.status.success() => return Ok(format!("Switched to {workspace}")),
-            Ok(output) => return Err(format!("Failed: {}", String::from_utf8_lossy(&output.stderr))),
+            Ok(output) => {
+                return Err(format!(
+                    "Failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
             Err(e) => return Err(format!("hyprctl failed: {e}")),
         }
     }
@@ -321,20 +351,30 @@ async fn search_files(query: &str, path: Option<&str>) -> Result<String, String>
         .output()
         .await;
 
-    if let Ok(output) = result {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = stdout.lines().take(20).collect();
-            if lines.is_empty() {
-                return Ok(format!("No files matching '{query}'"));
-            }
-            return Ok(format!("Found {} files:\n{}", lines.len(), lines.join("\n")));
+    if let Ok(output) = result
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().take(20).collect();
+        if lines.is_empty() {
+            return Ok(format!("No files matching '{query}'"));
         }
+        return Ok(format!(
+            "Found {} files:\n{}",
+            lines.len(),
+            lines.join("\n")
+        ));
     }
 
     // Fallback: find.
     let result = tokio::process::Command::new("find")
-        .args([search_path, "-maxdepth", "3", "-iname", &format!("*{query}*")])
+        .args([
+            search_path,
+            "-maxdepth",
+            "3",
+            "-iname",
+            &format!("*{query}*"),
+        ])
         .output()
         .await;
 
@@ -345,10 +385,17 @@ async fn search_files(query: &str, path: Option<&str>) -> Result<String, String>
             if lines.is_empty() {
                 Ok(format!("No files matching '{query}'"))
             } else {
-                Ok(format!("Found {} files:\n{}", lines.len(), lines.join("\n")))
+                Ok(format!(
+                    "Found {} files:\n{}",
+                    lines.len(),
+                    lines.join("\n")
+                ))
             }
         }
-        Ok(output) => Err(format!("Search failed: {}", String::from_utf8_lossy(&output.stderr))),
+        Ok(output) => Err(format!(
+            "Search failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )),
         Err(e) => Err(format!("Search command failed: {e}")),
     }
 }
@@ -388,10 +435,10 @@ async fn clipboard_set(text: &str) -> Result<String, String> {
         .output()
         .await;
 
-    if let Ok(output) = result {
-        if output.status.success() {
-            return Ok("Clipboard updated".to_string());
-        }
+    if let Ok(output) = result
+        && output.status.success()
+    {
+        return Ok("Clipboard updated".to_string());
     }
 
     // Fallback: xclip.
@@ -406,17 +453,24 @@ async fn clipboard_set(text: &str) -> Result<String, String> {
 
     if let Some(mut stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(text.as_bytes()).await
+        stdin
+            .write_all(text.as_bytes())
+            .await
             .map_err(|e| format!("Failed to write to xclip: {e}"))?;
     }
 
-    let output = child.wait_with_output().await
+    let output = child
+        .wait_with_output()
+        .await
         .map_err(|e| format!("xclip wait failed: {e}"))?;
 
     if output.status.success() {
         Ok("Clipboard updated".to_string())
     } else {
-        Err(format!("Failed to set clipboard: {}", String::from_utf8_lossy(&output.stderr)))
+        Err(format!(
+            "Failed to set clipboard: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }
 
@@ -434,12 +488,12 @@ async fn read_window_title() -> Result<String, String> {
             .map_err(|e| format!("swaymsg failed: {e}"))?;
 
         let tree = String::from_utf8_lossy(&output.stdout);
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&tree) {
-            if let Some(focused) = find_focused_sway_node(&json) {
-                let app = focused.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
-                let title = focused.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                return Ok(format!("{app} — {title}"));
-            }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&tree)
+            && let Some(focused) = find_focused_sway_node(&json)
+        {
+            let app = focused.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
+            let title = focused.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            return Ok(format!("{app} — {title}"));
         }
     }
 
@@ -448,18 +502,19 @@ async fn read_window_title() -> Result<String, String> {
         let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap();
         let socket = format!("/tmp/hypr/{instance}/.socket2.sock");
 
-        use std::os::unix::net::UnixStream;
         use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
 
-        let mut stream = UnixStream::connect(&socket)
-            .map_err(|e| format!("Hyprland socket: {e}"))?;
-        stream.write_all(b"j/activewindow")
+        let mut stream =
+            UnixStream::connect(&socket).map_err(|e| format!("Hyprland socket: {e}"))?;
+        stream
+            .write_all(b"j/activewindow")
             .map_err(|e| format!("Hyprland write: {e}"))?;
-        stream.flush()
-            .map_err(|e| format!("Hyprland flush: {e}"))?;
+        stream.flush().map_err(|e| format!("Hyprland flush: {e}"))?;
 
         let mut response = String::new();
-        stream.read_to_string(&mut response)
+        stream
+            .read_to_string(&mut response)
             .map_err(|e| format!("Hyprland read: {e}"))?;
 
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
@@ -485,8 +540,8 @@ async fn read_window_title() -> Result<String, String> {
 
         if let Ok(out) = title_output {
             let title = String::from_utf8_lossy(&out.stdout)
-                .splitn(2, '=')
-                .nth(1)
+                .split_once('=')
+                .map(|x| x.1)
                 .unwrap_or("")
                 .trim()
                 .trim_matches('"')
@@ -528,19 +583,31 @@ async fn notify(title: &str, body: &str) -> Result<String, String> {
 
     match result {
         Ok(output) if output.status.success() => Ok(format!("Notification: {title}")),
-        Ok(output) => Err(format!("Notification failed: {}", String::from_utf8_lossy(&output.stderr))),
+        Ok(output) => Err(format!(
+            "Notification failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )),
         Err(_) => {
             // Fallback: gdbus to fdo.Notifications.
             let escaped_body = body.replace('"', "\\\"");
             let result = tokio::process::Command::new("gdbus")
                 .args([
-                    "call", "--session",
-                    "--dest", "org.freedesktop.Notifications",
-                    "--object-path", "/org/freedesktop/Notifications",
-                    "--method", "org.freedesktop.Notifications.Notify",
-                    "enaos", "0", "dialog-information",
-                    title, &escaped_body,
-                    "[]", "{}", "0",
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.freedesktop.Notifications",
+                    "--object-path",
+                    "/org/freedesktop/Notifications",
+                    "--method",
+                    "org.freedesktop.Notifications.Notify",
+                    "enaos",
+                    "0",
+                    "dialog-information",
+                    title,
+                    &escaped_body,
+                    "[]",
+                    "{}",
+                    "0",
                 ])
                 .output()
                 .await;

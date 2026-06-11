@@ -10,7 +10,6 @@
 /// - "switch" -> workspaces, windows
 /// - "search" -> memory, file search, browser
 /// - "generic" -> balanced across all sources
-
 use std::collections::HashMap;
 
 /// Classified user intent with bias weights for each suggestion source.
@@ -62,7 +61,6 @@ impl IntentClassifier {
                 ("reopen", IntentType::Continue),
                 ("pick up", IntentType::Continue),
                 ("back to", IntentType::Continue),
-
                 // Restore intent — go back to previous state
                 ("restore", IntentType::Restore),
                 ("undo", IntentType::Restore),
@@ -70,21 +68,18 @@ impl IntentClassifier {
                 ("previous", IntentType::Restore),
                 ("revert", IntentType::Restore),
                 ("rollback", IntentType::Restore),
-
                 // Open intent — launch things
                 ("open", IntentType::Open),
                 ("launch", IntentType::Open),
                 ("start", IntentType::Open),
                 ("run", IntentType::Open),
                 ("show me", IntentType::Open),
-
                 // Switch intent — change context
                 ("switch", IntentType::Switch),
                 ("change", IntentType::Switch),
                 ("move to", IntentType::Switch),
                 ("go to", IntentType::Switch),
                 ("toggle", IntentType::Switch),
-
                 // Search intent — find things
                 ("search", IntentType::Search),
                 ("find", IntentType::Search),

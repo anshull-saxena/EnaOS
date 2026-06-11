@@ -5,7 +5,6 @@
 /// - Automatic expiration and cleanup
 /// - Recency-weighted relevance scoring
 /// - Workspace-tagged entries
-
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -28,8 +27,8 @@ impl MemoryStore {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let conn = Connection::open(path)
-            .map_err(|e| format!("Failed to open memory database: {e}"))?;
+        let conn =
+            Connection::open(path).map_err(|e| format!("Failed to open memory database: {e}"))?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -95,7 +94,13 @@ impl MemoryStore {
     }
 
     /// Insert a new memory entry.
-    pub fn insert(&self, entry_type: MemoryType, workspace: Option<&str>, summary: &str, details: &serde_json::Value) -> Result<i64, String> {
+    pub fn insert(
+        &self,
+        entry_type: MemoryType,
+        workspace: Option<&str>,
+        summary: &str,
+        details: &serde_json::Value,
+    ) -> Result<i64, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
 
         let now = Utc::now();
@@ -153,16 +158,17 @@ impl MemoryStore {
         // Full-text search.
         if let Some(ref search) = q.search {
             // Use FTS5 for search.
-            sql = format!(
-                "SELECT m.id, m.timestamp, m.entry_type, m.workspace, m.summary, m.details, m.relevance
+            sql = "SELECT m.id, m.timestamp, m.entry_type, m.workspace, m.summary, m.details, m.relevance
                  FROM memory_entries m
                  JOIN memory_fts f ON m.id = f.rowid
-                 WHERE memory_fts MATCH ? AND 1=1",
-            );
+                 WHERE memory_fts MATCH ? AND 1=1".to_string();
 
             if !q.entry_types.is_empty() {
                 let placeholders: Vec<_> = (0..q.entry_types.len()).map(|_| "?").collect();
-                sql.push_str(&format!(" AND m.entry_type IN ({})", placeholders.join(",")));
+                sql.push_str(&format!(
+                    " AND m.entry_type IN ({})",
+                    placeholders.join(",")
+                ));
                 for t in &q.entry_types {
                     params_vec.push(Box::new(t.to_string()));
                 }
@@ -185,12 +191,18 @@ impl MemoryStore {
             sql.push_str(" ORDER BY rank DESC, m.timestamp DESC LIMIT ?");
             final_params.push(&q.limit);
 
-            let mut stmt = conn.prepare(&sql).map_err(|e| format!("Prepare failed: {e}"))?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(final_params.iter()), |row| {
-                parse_entry(row)
-            }).map_err(|e| format!("Query failed: {e}"))?;
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| format!("Prepare failed: {e}"))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(final_params.iter()), |row| {
+                    parse_entry(row)
+                })
+                .map_err(|e| format!("Query failed: {e}"))?;
 
-            return rows.collect::<Result<Vec<_>, _>>().map_err(|e| format!("Row parse: {e}"));
+            return rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Row parse: {e}"));
         }
 
         // No search — order by recency.
@@ -202,50 +214,55 @@ impl MemoryStore {
         }
         final_params.push(&q.limit);
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| format!("Prepare failed: {e}"))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(final_params.iter()), |row| {
-            parse_entry(row)
-        }).map_err(|e| format!("Query failed: {e}"))?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("Prepare failed: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(final_params.iter()), |row| {
+                parse_entry(row)
+            })
+            .map_err(|e| format!("Query failed: {e}"))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| format!("Row parse: {e}"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row parse: {e}"))
     }
 
     /// Get a summary of the current memory state.
     pub fn summary(&self) -> Result<MemorySummary, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
 
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memory_entries",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_entries", [], |row| row.get(0))
+            .unwrap_or(0);
 
-        let oldest: Option<String> = conn.query_row(
-            "SELECT MIN(timestamp) FROM memory_entries",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ).ok().flatten();
+        let oldest: Option<String> = conn
+            .query_row("SELECT MIN(timestamp) FROM memory_entries", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
 
-        let newest: Option<String> = conn.query_row(
-            "SELECT MAX(timestamp) FROM memory_entries",
-            [],
-            |row| row.get::<_, Option<String>>(0),
-        ).ok().flatten();
+        let newest: Option<String> = conn
+            .query_row("SELECT MAX(timestamp) FROM memory_entries", [], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten();
 
         // Entry type counts.
         let mut type_counts = serde_json::Map::new();
-        let mut stmt = conn.prepare(
-            "SELECT entry_type, COUNT(*) FROM memory_entries GROUP BY entry_type"
-        ).map_err(|e| format!("Prepare failed: {e}"))?;
+        let mut stmt = conn
+            .prepare("SELECT entry_type, COUNT(*) FROM memory_entries GROUP BY entry_type")
+            .map_err(|e| format!("Prepare failed: {e}"))?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        }).map_err(|e| format!("Query failed: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| format!("Query failed: {e}"))?;
 
-        for row in rows {
-            if let Ok((t, c)) = row {
-                type_counts.insert(t, serde_json::Value::Number(c.into()));
-            }
+        for (t, c) in rows.flatten() {
+            type_counts.insert(t, serde_json::Value::Number(c.into()));
         }
 
         // Distinct workspaces.
@@ -287,8 +304,16 @@ impl MemoryStore {
 
         Ok(MemorySummary {
             total_entries: total,
-            oldest_entry: oldest.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc))),
-            newest_entry: newest.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc))),
+            oldest_entry: oldest.and_then(|s| {
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+            }),
+            newest_entry: newest.and_then(|s| {
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+            }),
             entry_counts: serde_json::Value::Object(type_counts),
             workspaces,
             recent_intents,
@@ -302,10 +327,12 @@ impl MemoryStore {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let cutoff = (Utc::now() - Duration::hours(max_age_hours)).to_rfc3339();
 
-        let deleted = conn.execute(
-            "DELETE FROM memory_entries WHERE timestamp < ?",
-            params![cutoff],
-        ).map_err(|e| format!("Expire failed: {e}"))?;
+        let deleted = conn
+            .execute(
+                "DELETE FROM memory_entries WHERE timestamp < ?",
+                params![cutoff],
+            )
+            .map_err(|e| format!("Expire failed: {e}"))?;
 
         if deleted > 0 {
             info!("Memory: expired {deleted} entries older than {max_age_hours}h");
@@ -317,7 +344,8 @@ impl MemoryStore {
     /// Compact the database (vacuum).
     pub fn compact(&self) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        conn.execute("VACUUM", []).map_err(|e| format!("Vacuum failed: {e}"))?;
+        conn.execute("VACUUM", [])
+            .map_err(|e| format!("Vacuum failed: {e}"))?;
         Ok(())
     }
 
@@ -343,7 +371,9 @@ fn parse_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
 
-    let entry_type = entry_type_str.parse::<MemoryType>().unwrap_or(MemoryType::Event);
+    let entry_type = entry_type_str
+        .parse::<MemoryType>()
+        .unwrap_or(MemoryType::Event);
     let details = serde_json::from_str(&details_str).unwrap_or(serde_json::json!({}));
 
     Ok(MemoryEntry {

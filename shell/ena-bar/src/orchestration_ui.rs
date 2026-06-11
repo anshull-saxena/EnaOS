@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use gtk4::prelude::*;
 use gtk4::glib;
+use gtk4::prelude::*;
 use serde_json::Value;
 
 /// Display state for a single orchestration node.
@@ -10,7 +10,7 @@ use serde_json::Value;
 pub(crate) struct NodeDisplay {
     pub id: String,
     pub label: String,
-    pub status: String,   // Pending, Running, Completed, Failed, Skipped, Cancelled
+    pub status: String, // Pending, Running, Completed, Failed, Skipped, Cancelled
     pub error: Option<String>,
 }
 
@@ -19,7 +19,7 @@ pub(crate) struct NodeDisplay {
 pub(crate) struct OrchestrationDisplay {
     pub plan_id: Option<String>,
     pub plan_title: String,
-    pub status: String,   // Hidden, PendingApproval, Running, Completed, Failed, etc.
+    pub status: String, // Hidden, PendingApproval, Running, Completed, Failed, etc.
     pub message: String,
     pub nodes: Vec<NodeDisplay>,
 }
@@ -59,10 +59,7 @@ pub struct TimelineWidget {
 impl TimelineWidget {
     pub fn new() -> Arc<Self> {
         // ── Approval bar ─────────────────────────────────────────
-        let approval_label = gtk4::Label::builder()
-            .xalign(0.0)
-            .wrap(true)
-            .build();
+        let approval_label = gtk4::Label::builder().xalign(0.0).wrap(true).build();
         approval_label.add_css_class("ena-orch-approval-label");
 
         let approve_button = gtk4::Button::with_label("Approve");
@@ -156,20 +153,20 @@ impl TimelineWidget {
         let w = widget.clone();
         approve_button_clone.connect_clicked(move |_| {
             let state = w.state.lock().unwrap();
-            if let Some(ref plan_id) = state.plan_id {
-                if let Some(ref cb) = *w.on_approve.lock().unwrap() {
-                    cb(plan_id.clone());
-                }
+            if let Some(ref plan_id) = state.plan_id
+                && let Some(ref cb) = *w.on_approve.lock().unwrap()
+            {
+                cb(plan_id.clone());
             }
         });
 
         let w = widget.clone();
         reject_button_clone.connect_clicked(move |_| {
             let state = w.state.lock().unwrap();
-            if let Some(ref plan_id) = state.plan_id {
-                if let Some(ref cb) = *w.on_reject.lock().unwrap() {
-                    cb(plan_id.clone());
-                }
+            if let Some(ref plan_id) = state.plan_id
+                && let Some(ref cb) = *w.on_reject.lock().unwrap()
+            {
+                cb(plan_id.clone());
             }
         });
 
@@ -257,7 +254,8 @@ impl TimelineWidget {
             .collect();
         if !risky.is_empty() {
             let detail = format!("\nActions: {}", risky.join(", "));
-            self.approval_label.set_label(&format!("{}{}", text, detail));
+            self.approval_label
+                .set_label(&format!("{}{}", text, detail));
         }
     }
 
@@ -268,13 +266,17 @@ impl TimelineWidget {
             self.node_list.remove(&child);
         }
 
-        let completed = display.nodes.iter().filter(|n| n.status == "Completed").count();
+        let completed = display
+            .nodes
+            .iter()
+            .filter(|n| n.status == "Completed")
+            .count();
         let total = display.nodes.len();
 
         // Header: plan title + progress.
         if !display.plan_title.is_empty() {
             let header = gtk4::Label::builder()
-                .label(&format!(
+                .label(format!(
                     "{}  —  {}/{} steps",
                     display.plan_title, completed, total
                 ))
@@ -365,9 +367,21 @@ impl TimelineWidget {
     /// Show compact completion summary.
     fn render_summary(&self, display: &OrchestrationDisplay) {
         let total = display.nodes.len();
-        let completed = display.nodes.iter().filter(|n| n.status == "Completed").count();
-        let failed = display.nodes.iter().filter(|n| n.status == "Failed").count();
-        let skipped = display.nodes.iter().filter(|n| n.status == "Skipped").count();
+        let completed = display
+            .nodes
+            .iter()
+            .filter(|n| n.status == "Completed")
+            .count();
+        let failed = display
+            .nodes
+            .iter()
+            .filter(|n| n.status == "Failed")
+            .count();
+        let skipped = display
+            .nodes
+            .iter()
+            .filter(|n| n.status == "Skipped")
+            .count();
 
         let mut text = match display.status.as_str() {
             "Completed" => format!("✓ Plan completed — {completed}/{total} steps"),
@@ -412,13 +426,18 @@ pub(crate) fn parse_plan_event(payload: &Value) -> Option<(String, String, Strin
 }
 
 /// Parse an OrchestrationNodeEvent payload from enad.
-pub(crate) fn parse_node_event(payload: &Value) -> Option<(String, String, String, Option<String>)> {
+pub(crate) fn parse_node_event(
+    payload: &Value,
+) -> Option<(String, String, String, Option<String>)> {
     let data = payload.get("data")?;
     let plan_id = data.get("plan_id").and_then(|v| v.as_str())?;
     let node_id = data.get("node_id").and_then(|v| v.as_str())?;
     let node_status = data.get("status").and_then(|v| v.as_str())?;
     let _label = data.get("label").and_then(|v| v.as_str()).unwrap_or("");
-    let error = data.get("error").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let error = data
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     Some((
         plan_id.to_string(),
         node_id.to_string(),

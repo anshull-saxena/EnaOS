@@ -12,7 +12,6 @@
 ///   - Fall back to swaymsg / hyprctl if available
 ///
 /// Publishes WindowFocused, WindowOpened, WindowClosed events.
-
 use std::sync::Arc;
 
 use tracing::info;
@@ -143,7 +142,10 @@ async fn get_focused_window_gnome() -> Result<(String, String), ()> {
     if output.status.success() {
         let result = String::from_utf8_lossy(&output.stdout);
         // Output format: (true, 'app|title')
-        if let Some(data) = result.strip_prefix("(true, '").and_then(|s| s.strip_suffix("')\n").or(s.strip_suffix("')"))) {
+        if let Some(data) = result
+            .strip_prefix("(true, '")
+            .and_then(|s| s.strip_suffix("')\n").or(s.strip_suffix("')")))
+        {
             let parts: Vec<&str> = data.split('|').collect();
             if parts.len() >= 2 {
                 let app = parts[0].to_string();
@@ -172,11 +174,7 @@ async fn get_focused_window_xprop() -> Result<(String, String), ()> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Parse window ID from: _NET_ACTIVE_WINDOW(WINDOW): window id # 0x4000005
-    let window_id = stdout
-        .split('#')
-        .nth(1)
-        .map(|s| s.trim())
-        .ok_or(())?;
+    let window_id = stdout.split('#').nth(1).map(|s| s.trim()).ok_or(())?;
 
     // Get WM_CLASS and _NET_WM_NAME for that window.
     let class_output = tokio::process::Command::new("xprop")
@@ -272,7 +270,11 @@ fn parse_sway_focused(tree: &str) -> Result<(String, String), ()> {
         if let Some(focused) = find_focused_node(&json) {
             let app = focused
                 .get("app_id")
-                .or_else(|| focused.get("window_properties").and_then(|p| p.get("class")))
+                .or_else(|| {
+                    focused
+                        .get("window_properties")
+                        .and_then(|p| p.get("class"))
+                })
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
@@ -348,8 +350,8 @@ async fn get_focused_window_hyprland() -> Result<(String, String), ()> {
     let socket = format!("/tmp/hypr/{instance}/.socket2.sock");
 
     // Hyprland IPC: send "j/activewindow" to get JSON response.
-    use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
     let mut stream = UnixStream::connect(&socket).map_err(|_| ())?;
     stream.write_all(b"j/activewindow").map_err(|_| ())?;
@@ -359,8 +361,16 @@ async fn get_focused_window_hyprland() -> Result<(String, String), ()> {
     stream.read_to_string(&mut response).map_err(|_| ())?;
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
-        let app = json.get("class").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let title = json.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let app = json
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let title = json
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if app != "unknown" {
             return Ok((app, title));
         }

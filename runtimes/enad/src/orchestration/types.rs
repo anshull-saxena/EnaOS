@@ -129,8 +129,18 @@ impl ExecutionPlan {
     }
 
     pub fn progress(&self) -> (usize, usize) {
-        let done = self.nodes.iter()
-            .filter(|n| matches!(n.status, NodeStatus::Completed | NodeStatus::Failed | NodeStatus::Skipped | NodeStatus::Cancelled))
+        let done = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                matches!(
+                    n.status,
+                    NodeStatus::Completed
+                        | NodeStatus::Failed
+                        | NodeStatus::Skipped
+                        | NodeStatus::Cancelled
+                )
+            })
             .count();
         (done, self.nodes.len())
     }

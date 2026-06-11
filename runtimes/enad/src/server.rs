@@ -6,16 +6,16 @@ use tracing::{error, info, warn};
 use crate::actions::executor::ActionExecutor;
 use crate::actions::types::{ActionRequest, ActionType};
 use crate::bus::EventBus;
+use crate::context::ContextEngine;
+use crate::first_run::{FirstRunManager, create_demo_orchestration_plan, create_demo_snapshot};
 use crate::memory::store::MemoryStore;
 use crate::memory::types::MemoryQuery;
 use crate::orchestration::engine::OrchestrationEngine;
+use crate::restore::plan::RestorePlanner;
+use crate::restore::types::{RestoreResult, RestoreSelections};
 use crate::snapshot::capture;
 use crate::snapshot::store::SnapshotStore;
-use crate::restore::plan::RestorePlanner;
-use crate::restore::types::{RestoreSelections, RestoreResult};
 use crate::suggestion::engine::SuggestionEngine;
-use crate::context::ContextEngine;
-use crate::first_run::{FirstRunManager, create_demo_snapshot, create_demo_orchestration_plan};
 use crate::types::ipc::{Command, IpcMessage, MessageKind, Response, StateTarget};
 
 /// IPC server that listens on a Unix domain socket.
@@ -221,30 +221,48 @@ async fn dispatch(
 
     match msg.kind {
         MessageKind::Command(cmd) => {
-            let response = handle_command(cmd, bus, executor, memory, snapshots, orchestration, suggestion, context, first_run).await;
+            let response = handle_command(
+                cmd,
+                bus,
+                executor,
+                memory,
+                snapshots,
+                orchestration,
+                suggestion,
+                context,
+                first_run,
+            )
+            .await;
             IpcMessage::response(id, response)
         }
-        MessageKind::Subscribe(sub) => {
-            IpcMessage::response(id, Response::Ok {
+        MessageKind::Subscribe(sub) => IpcMessage::response(
+            id,
+            Response::Ok {
                 message: Some(format!("Subscribed to {} event kind(s)", sub.kinds.len())),
-            })
-        }
+            },
+        ),
         MessageKind::Ping => {
             let latency = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            IpcMessage::response(id, Response::Data {
-                payload: serde_json::json!({
-                    "code": "PONG",
-                    "latency_ms": latency,
-                }),
-            })
+            IpcMessage::response(
+                id,
+                Response::Data {
+                    payload: serde_json::json!({
+                        "code": "PONG",
+                        "latency_ms": latency,
+                    }),
+                },
+            )
         }
-        _ => IpcMessage::response(id, Response::Error {
-            code: "UNEXPECTED".into(),
-            message: "Unexpected message kind from client".into(),
-        }),
+        _ => IpcMessage::response(
+            id,
+            Response::Error {
+                code: "UNEXPECTED".into(),
+                message: "Unexpected message kind from client".into(),
+            },
+        ),
     }
 }
 
@@ -261,11 +279,9 @@ async fn handle_command(
     first_run: &FirstRunManager,
 ) -> Response {
     match cmd {
-        Command::Execute { command, args } => {
-            Response::Ok {
-                message: Some(format!("Executing: {} {:?}", command, args)),
-            }
-        }
+        Command::Execute { command, args } => Response::Ok {
+            message: Some(format!("Executing: {} {:?}", command, args)),
+        },
         Command::ExecuteAction { action, params } => {
             // Parse the action type from the string + params.
             let action_type = parse_action_type(&action, &params);
@@ -294,17 +310,15 @@ async fn handle_command(
                 },
             }
         }
-        Command::CancelAction { action_id } => {
-            match executor.cancel(action_id).await {
-                Ok(()) => Response::Ok {
-                    message: Some(format!("Action {action_id} cancelled")),
-                },
-                Err(error) => Response::Error {
-                    code: "CANCEL_FAILED".into(),
-                    message: error,
-                },
-            }
-        }
+        Command::CancelAction { action_id } => match executor.cancel(action_id).await {
+            Ok(()) => Response::Ok {
+                message: Some(format!("Action {action_id} cancelled")),
+            },
+            Err(error) => Response::Error {
+                code: "CANCEL_FAILED".into(),
+                message: error,
+            },
+        },
         Command::SpawnAgent { task, capabilities } => {
             let agent_id = uuid::Uuid::new_v4();
 
@@ -382,17 +396,15 @@ async fn handle_command(
                     },
                 }
             }
-            StateTarget::MemorySummary => {
-                match memory.summary() {
-                    Ok(summary) => Response::Data {
-                        payload: serde_json::to_value(&summary).unwrap_or(serde_json::json!({})),
-                    },
-                    Err(e) => Response::Error {
-                        code: "MEMORY_SUMMARY".into(),
-                        message: e,
-                    },
-                }
-            }
+            StateTarget::MemorySummary => match memory.summary() {
+                Ok(summary) => Response::Data {
+                    payload: serde_json::to_value(&summary).unwrap_or(serde_json::json!({})),
+                },
+                Err(e) => Response::Error {
+                    code: "MEMORY_SUMMARY".into(),
+                    message: e,
+                },
+            },
             StateTarget::MemorySearch { query } => {
                 let q = MemoryQuery::search(&query);
                 match memory.query(&q) {
@@ -436,39 +448,33 @@ async fn handle_command(
                 },
             }
         }
-        Command::ApprovePlan { plan_id } => {
-            match orchestration.approve_plan(plan_id).await {
-                Ok(()) => Response::Ok {
-                    message: Some(format!("Plan {plan_id} approved")),
-                },
-                Err(e) => Response::Error {
-                    code: "APPROVE_FAILED".into(),
-                    message: e,
-                },
-            }
-        }
-        Command::RejectPlan { plan_id } => {
-            match orchestration.reject_plan(plan_id).await {
-                Ok(()) => Response::Ok {
-                    message: Some(format!("Plan {plan_id} rejected")),
-                },
-                Err(e) => Response::Error {
-                    code: "REJECT_FAILED".into(),
-                    message: e,
-                },
-            }
-        }
-        Command::CancelPlan { plan_id } => {
-            match orchestration.cancel_plan(plan_id).await {
-                Ok(()) => Response::Ok {
-                    message: Some(format!("Plan {plan_id} cancelled")),
-                },
-                Err(e) => Response::Error {
-                    code: "CANCEL_FAILED".into(),
-                    message: e,
-                },
-            }
-        }
+        Command::ApprovePlan { plan_id } => match orchestration.approve_plan(plan_id).await {
+            Ok(()) => Response::Ok {
+                message: Some(format!("Plan {plan_id} approved")),
+            },
+            Err(e) => Response::Error {
+                code: "APPROVE_FAILED".into(),
+                message: e,
+            },
+        },
+        Command::RejectPlan { plan_id } => match orchestration.reject_plan(plan_id).await {
+            Ok(()) => Response::Ok {
+                message: Some(format!("Plan {plan_id} rejected")),
+            },
+            Err(e) => Response::Error {
+                code: "REJECT_FAILED".into(),
+                message: e,
+            },
+        },
+        Command::CancelPlan { plan_id } => match orchestration.cancel_plan(plan_id).await {
+            Ok(()) => Response::Ok {
+                message: Some(format!("Plan {plan_id} cancelled")),
+            },
+            Err(e) => Response::Error {
+                code: "CANCEL_FAILED".into(),
+                message: e,
+            },
+        },
         Command::ListPlans => {
             let plans = orchestration.list_plans().await;
             Response::Data {
@@ -478,9 +484,9 @@ async fn handle_command(
         // ── Workspace Snapshot commands ──
         Command::TakeSnapshot { label } => {
             let label = label.unwrap_or_else(|| "Manual snapshot".to_string());
-            let snapshot = capture::take_immediate_snapshot(
-                snapshots, memory, orchestration, &label, bus,
-            ).await;
+            let snapshot =
+                capture::take_immediate_snapshot(snapshots, memory, orchestration, &label, bus)
+                    .await;
             match snapshot {
                 Ok(snapshot_id) => {
                     bus.publish(crate::types::events::SystemEvent::new(
@@ -517,43 +523,39 @@ async fn handle_command(
                 },
             }
         }
-        Command::GetSnapshot { snapshot_id } => {
-            match snapshots.get(&snapshot_id) {
-                Ok(Some(snapshot)) => Response::Data {
-                    payload: serde_json::to_value(&snapshot).unwrap_or(serde_json::json!({})),
-                },
-                Ok(None) => Response::Error {
-                    code: "NOT_FOUND".into(),
-                    message: format!("Snapshot {snapshot_id} not found"),
-                },
-                Err(e) => Response::Error {
-                    code: "SNAPSHOT_GET".into(),
-                    message: e,
-                },
-            }
-        }
-        Command::DeleteSnapshot { snapshot_id } => {
-            match snapshots.delete(&snapshot_id) {
-                Ok(true) => {
-                    bus.publish(crate::types::events::SystemEvent::new(
-                        "enad",
-                        crate::types::events::EventKind::System,
-                        crate::types::events::EventPayload::SnapshotDeleted { snapshot_id },
-                    ));
-                    Response::Ok {
-                        message: Some(format!("Snapshot {snapshot_id} deleted")),
-                    }
+        Command::GetSnapshot { snapshot_id } => match snapshots.get(&snapshot_id) {
+            Ok(Some(snapshot)) => Response::Data {
+                payload: serde_json::to_value(&snapshot).unwrap_or(serde_json::json!({})),
+            },
+            Ok(None) => Response::Error {
+                code: "NOT_FOUND".into(),
+                message: format!("Snapshot {snapshot_id} not found"),
+            },
+            Err(e) => Response::Error {
+                code: "SNAPSHOT_GET".into(),
+                message: e,
+            },
+        },
+        Command::DeleteSnapshot { snapshot_id } => match snapshots.delete(&snapshot_id) {
+            Ok(true) => {
+                bus.publish(crate::types::events::SystemEvent::new(
+                    "enad",
+                    crate::types::events::EventKind::System,
+                    crate::types::events::EventPayload::SnapshotDeleted { snapshot_id },
+                ));
+                Response::Ok {
+                    message: Some(format!("Snapshot {snapshot_id} deleted")),
                 }
-                Ok(false) => Response::Error {
-                    code: "NOT_FOUND".into(),
-                    message: format!("Snapshot {snapshot_id} not found"),
-                },
-                Err(e) => Response::Error {
-                    code: "SNAPSHOT_DELETE".into(),
-                    message: e,
-                },
             }
-        }
+            Ok(false) => Response::Error {
+                code: "NOT_FOUND".into(),
+                message: format!("Snapshot {snapshot_id} not found"),
+            },
+            Err(e) => Response::Error {
+                code: "SNAPSHOT_DELETE".into(),
+                message: e,
+            },
+        },
         // ── Restoration commands ──
         Command::PreviewRestore { snapshot_id } => {
             let planner = RestorePlanner;
@@ -574,19 +576,26 @@ async fn handle_command(
                 },
             }
         }
-        Command::RestoreSnapshot { snapshot_id, selections } => {
+        Command::RestoreSnapshot {
+            snapshot_id,
+            selections,
+        } => {
             let planner = RestorePlanner;
 
             let snapshot = match snapshots.get(&snapshot_id) {
                 Ok(Some(s)) => s,
-                Ok(None) => return Response::Error {
-                    code: "NOT_FOUND".into(),
-                    message: format!("Snapshot {snapshot_id} not found"),
-                },
-                Err(e) => return Response::Error {
-                    code: "SNAPSHOT_GET".into(),
-                    message: e,
-                },
+                Ok(None) => {
+                    return Response::Error {
+                        code: "NOT_FOUND".into(),
+                        message: format!("Snapshot {snapshot_id} not found"),
+                    };
+                }
+                Err(e) => {
+                    return Response::Error {
+                        code: "SNAPSHOT_GET".into(),
+                        message: e,
+                    };
+                }
             };
 
             // Parse optional selection filters.
@@ -613,7 +622,10 @@ async fn handle_command(
                 crate::types::events::EventPayload::RestoreStarted {
                     snapshot_id,
                     plan_id,
-                    description: format!("Restoration of {} with {action_count} actions", snapshot.label),
+                    description: format!(
+                        "Restoration of {} with {action_count} actions",
+                        snapshot.label
+                    ),
                 },
             ));
 
@@ -622,7 +634,8 @@ async fn handle_command(
                     snapshot_id,
                     plan_id,
                     action_count,
-                }).unwrap_or(serde_json::json!({})),
+                })
+                .unwrap_or(serde_json::json!({})),
             }
         }
 
@@ -631,9 +644,10 @@ async fn handle_command(
             let limit = limit.unwrap_or(5) as usize;
             suggestion.get_suggestions(limit)
         }
-        Command::DismissSuggestion { suggestion_id, permanent } => {
-            suggestion.dismiss_suggestion(&suggestion_id, permanent.unwrap_or(false))
-        }
+        Command::DismissSuggestion {
+            suggestion_id,
+            permanent,
+        } => suggestion.dismiss_suggestion(&suggestion_id, permanent.unwrap_or(false)),
 
         // ── First-Run / Onboarding commands ──
         Command::GetFirstRunStatus => {
@@ -683,39 +697,89 @@ async fn handle_command(
 fn parse_action_type(name: &str, params: &serde_json::Value) -> Result<ActionType, String> {
     match name {
         "open_app" => Ok(ActionType::OpenApp {
-            app: params.get("app").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            app: params
+                .get("app")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "open_url" => Ok(ActionType::OpenUrl {
-            url: params.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            url: params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "focus_window" => Ok(ActionType::FocusWindow {
-            app: params.get("app").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            title: params.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            app: params
+                .get("app")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            title: params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         }),
         "launch_command" => Ok(ActionType::LaunchCommand {
-            command: params.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            args: params.get("args")
+            command: params
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            args: params
+                .get("args")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }),
         "switch_workspace" => Ok(ActionType::SwitchWorkspace {
-            workspace: params.get("workspace").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "search_files" => Ok(ActionType::SearchFiles {
-            query: params.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            path: params.get("path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            query: params
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            path: params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
         }),
         "media_control" => Ok(ActionType::MediaControl {
-            action: params.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            action: params
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "clipboard_set" => Ok(ActionType::ClipboardSet {
-            text: params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            text: params
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "read_window_title" => Ok(ActionType::ReadWindowTitle),
         "notify" => Ok(ActionType::Notify {
-            title: params.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            body: params.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            body: params
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         _ => Err(format!("Unknown action: {name}")),
     }

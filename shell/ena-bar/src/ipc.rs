@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -40,10 +40,20 @@ enum MessageKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Command {
-    Execute { command: String, args: Vec<String> },
-    SpawnAgent { task: String, capabilities: Vec<String> },
-    QueryState { target: String },
-    Terminate { id: Uuid },
+    Execute {
+        command: String,
+        args: Vec<String>,
+    },
+    SpawnAgent {
+        task: String,
+        capabilities: Vec<String>,
+    },
+    QueryState {
+        target: String,
+    },
+    Terminate {
+        id: Uuid,
+    },
     GetContext,
 }
 
@@ -95,11 +105,7 @@ pub enum EnadEvent {
 ///
 /// Connects to enad's Unix socket, subscribes to all events,
 /// and forwards them to the GTK main loop via the mpsc sender.
-pub fn run(
-    socket_path: String,
-    running: Arc<AtomicBool>,
-    sender: mpsc::Sender<EnadEvent>,
-) {
+pub fn run(socket_path: String, running: Arc<AtomicBool>, sender: mpsc::Sender<EnadEvent>) {
     info!("IPC client starting, connecting to {socket_path}");
 
     loop {
@@ -233,7 +239,9 @@ pub fn send_unit_command(socket_path: &str, command: &str) -> Result<Value, Stri
     writer.flush().map_err(|e| format!("flush: {e}"))?;
 
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read: {e}"))?;
 
     serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))
 }
@@ -267,7 +275,9 @@ pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Va
     writer.flush().map_err(|e| format!("flush: {e}"))?;
 
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read: {e}"))?;
 
     serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))
 }
@@ -279,7 +289,11 @@ pub fn send_command(socket_path: &str, command: &str, body: &Value) -> Result<Va
 ///
 /// Response wire format:
 ///   {"id": "...", "kind": {"type": "Response", "body": {"Data": {"payload": {"commands": [...], "context": {...}}}}}}
-pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Result<Vec<CommandSuggestion>, String> {
+pub fn get_context_commands(
+    socket_path: &str,
+    query: &str,
+    limit: u32,
+) -> Result<Vec<CommandSuggestion>, String> {
     let stream = UnixStream::connect(socket_path).map_err(|e| format!("connect: {e}"))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -307,25 +321,26 @@ pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Resul
     writer.flush().map_err(|e| format!("flush: {e}"))?;
 
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| format!("read: {e}"))?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read: {e}"))?;
 
     let response: Value = serde_json::from_str(&line).map_err(|e| format!("parse: {e}"))?;
 
     // Navigate: kind → body → Data → payload → commands
-    if let Some(kind) = response.get("kind") {
-        if let Some(body) = kind.get("body") {
-            // body is { "Data": { "payload": { "commands": [...], "context": {...} } } }
-            if let Some(data_body) = body.get("Data") {
-                if let Some(payload) = data_body.get("payload") {
-                    if let Some(commands) = payload.get("commands").and_then(|c| c.as_array()) {
-                        let parsed: Result<Vec<CommandSuggestion>, _> = commands
-                            .iter()
-                            .map(|s| serde_json::from_value(s.clone()))
-                            .collect();
-                        return parsed.map_err(|e| format!("parse_suggestions: {e}"));
-                    }
-                }
-            }
+    if let Some(kind) = response.get("kind")
+        && let Some(body) = kind.get("body")
+    {
+        // body is { "Data": { "payload": { "commands": [...], "context": {...} } } }
+        if let Some(data_body) = body.get("Data")
+            && let Some(payload) = data_body.get("payload")
+            && let Some(commands) = payload.get("commands").and_then(|c| c.as_array())
+        {
+            let parsed: Result<Vec<CommandSuggestion>, _> = commands
+                .iter()
+                .map(|s| serde_json::from_value(s.clone()))
+                .collect();
+            return parsed.map_err(|e| format!("parse_suggestions: {e}"));
         }
     }
 
@@ -340,52 +355,55 @@ pub fn get_context_commands(socket_path: &str, query: &str, limit: u32) -> Resul
 /// We navigate via the top-level "kind" field, not flattened fields.
 fn parse_event(json: Value) -> EnadEvent {
     // Check the "type" discriminator under "kind".
-    if let Some(kind_val) = json.get("kind") {
-        if let Some(msg_type) = kind_val.get("type").and_then(|v| v.as_str()) {
-            match msg_type {
-                "Pong" => {
-                    return EnadEvent::Pong { latency_ms: 0 };
-                }
-                "Event" => {
-                    // Extract the SystemEvent from kind.body.
-                    if let Some(body) = kind_val.get("body") {
-                        // The event kind (Window, System, Audio, etc.)
-                        let event_kind = body
-                            .get("kind")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-
-                        // The payload is the body's "payload" field.
-                        let payload = body.get("payload").cloned().unwrap_or(Value::Null);
-
-                        return EnadEvent::SystemEvent { kind: event_kind, payload };
-                    }
-                }
-                "Response" => {
-                    // Check if it's a response to a ping (PONG).
-                    if let Some(body) = kind_val.get("body") {
-                        // body is { "Ok": { ... } } or { "Data": { ... } } or { "Error": { ... } }
-                        // Pong responses have payload.code == "PONG" inside the Data variant.
-                        if let Some(data) = body.get("Data") {
-                            if let Some(payload) = data.get("payload") {
-                                if let Some(code) = payload.get("code").and_then(|v| v.as_str()) {
-                                    if code == "PONG" {
-                                        let latency = payload
-                                            .get("latency_ms")
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0);
-                                        return EnadEvent::Pong { latency_ms: latency };
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Non-pong responses are returned as Raw — the bar doesn't
-                    // route them through the event stream.
-                }
-                _ => {}
+    if let Some(kind_val) = json.get("kind")
+        && let Some(msg_type) = kind_val.get("type").and_then(|v| v.as_str())
+    {
+        match msg_type {
+            "Pong" => {
+                return EnadEvent::Pong { latency_ms: 0 };
             }
+            "Event" => {
+                // Extract the SystemEvent from kind.body.
+                if let Some(body) = kind_val.get("body") {
+                    // The event kind (Window, System, Audio, etc.)
+                    let event_kind = body
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    // The payload is the body's "payload" field.
+                    let payload = body.get("payload").cloned().unwrap_or(Value::Null);
+
+                    return EnadEvent::SystemEvent {
+                        kind: event_kind,
+                        payload,
+                    };
+                }
+            }
+            "Response" => {
+                // Check if it's a response to a ping (PONG).
+                if let Some(body) = kind_val.get("body") {
+                    // body is { "Ok": { ... } } or { "Data": { ... } } or { "Error": { ... } }
+                    // Pong responses have payload.code == "PONG" inside the Data variant.
+                    if let Some(data) = body.get("Data")
+                        && let Some(payload) = data.get("payload")
+                        && let Some(code) = payload.get("code").and_then(|v| v.as_str())
+                        && code == "PONG"
+                    {
+                        let latency = payload
+                            .get("latency_ms")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        return EnadEvent::Pong {
+                            latency_ms: latency,
+                        };
+                    }
+                }
+                // Non-pong responses are returned as Raw — the bar doesn't
+                // route them through the event stream.
+            }
+            _ => {}
         }
     }
 

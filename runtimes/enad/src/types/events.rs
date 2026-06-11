@@ -223,7 +223,10 @@ pub enum EventPayload {
         action_type: Option<String>,
         action_payload: Value,
     },
-    SuggestionDismissed { suggestion_id: Uuid, reason: String },
+    SuggestionDismissed {
+        suggestion_id: Uuid,
+        reason: String,
+    },
 
     // ── Debug ──
     Log {
@@ -506,9 +509,15 @@ mod tests {
 
         // The payload must use adjacently tagged format:
         // { "type": "WindowFocused", "data": { "app": "Alacritty", "title": "~" } }
-        assert!(json.get("type").is_some(), "EventPayload must have 'type' discriminator");
+        assert!(
+            json.get("type").is_some(),
+            "EventPayload must have 'type' discriminator"
+        );
         assert_eq!(json.get("type").unwrap(), "WindowFocused");
-        assert!(json.get("data").is_some(), "EventPayload must have 'data' content");
+        assert!(
+            json.get("data").is_some(),
+            "EventPayload must have 'data' content"
+        );
 
         // Verify the bar's parse_event navigation works:
         assert_eq!(json.get("type").unwrap().as_str().unwrap(), "WindowFocused");

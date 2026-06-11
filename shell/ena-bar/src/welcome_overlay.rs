@@ -14,7 +14,6 @@
 /// contains GTK widgets. All methods must be called from the GTK main thread.
 /// Bar.rs wires chip click handlers directly using glib closures, avoiding
 /// the Send bound issue by keeping all GTK access on the main thread.
-
 use gtk4::glib;
 use gtk4::prelude::*;
 

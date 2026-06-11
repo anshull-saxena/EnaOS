@@ -1,3 +1,4 @@
+pub mod capture;
 /// Working memory subsystem for EnaOS.
 ///
 /// Provides persistent contextual memory for the operating environment.
@@ -18,7 +19,5 @@
 ///   - Recency-weighted relevance scoring
 ///   - FTS5 full-text search for semantic recall
 ///   - Type-filtered queries (actions, windows, intents, etc.)
-
 pub mod store;
 pub mod types;
-pub mod capture;

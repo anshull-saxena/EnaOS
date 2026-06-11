@@ -19,8 +19,8 @@ impl SnapshotStore {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let conn = Connection::open(path)
-            .map_err(|e| format!("Failed to open snapshot database: {e}"))?;
+        let conn =
+            Connection::open(path).map_err(|e| format!("Failed to open snapshot database: {e}"))?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -79,7 +79,8 @@ impl SnapshotStore {
     pub fn insert(&self, snapshot: &WorkspaceSnapshot) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
 
-        let to_json = |v: &serde_json::Value| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+        let to_json =
+            |v: &serde_json::Value| serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
 
         conn.execute(
             "INSERT INTO workspace_snapshots
@@ -116,18 +117,18 @@ impl SnapshotStore {
     pub fn get(&self, snapshot_id: &Uuid) -> Result<Option<WorkspaceSnapshot>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT snapshot_id, created_at, label, is_auto, env_checksum,
+        let mut stmt = conn
+            .prepare(
+                "SELECT snapshot_id, created_at, label, is_auto, env_checksum,
                     active_project, context_summary,
                     workspaces_json, applications_json, windows_json,
                     terminals_json, browser_urls_json,
                     orchestration_plans_json, recent_actions_json, ai_conversations_json
-             FROM workspace_snapshots WHERE snapshot_id = ?1"
-        ).map_err(|e| format!("Prepare failed: {e}"))?;
+             FROM workspace_snapshots WHERE snapshot_id = ?1",
+            )
+            .map_err(|e| format!("Prepare failed: {e}"))?;
 
-        let result = stmt.query_row(params![snapshot_id.to_string()], |row| {
-            parse_snapshot(row)
-        });
+        let result = stmt.query_row(params![snapshot_id.to_string()], |row| parse_snapshot(row));
 
         match result {
             Ok(snapshot) => Ok(Some(snapshot)),
@@ -140,46 +141,54 @@ impl SnapshotStore {
     pub fn list(&self, limit: usize) -> Result<Vec<SnapshotSummary>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT snapshot_id, created_at, label, is_auto, is_restored,
+        let mut stmt = conn
+            .prepare(
+                "SELECT snapshot_id, created_at, label, is_auto, is_restored,
                     applications_json, terminals_json, orchestration_plans_json
              FROM workspace_snapshots
              ORDER BY created_at DESC
-             LIMIT ?1"
-        ).map_err(|e| format!("Prepare failed: {e}"))?;
+             LIMIT ?1",
+            )
+            .map_err(|e| format!("Prepare failed: {e}"))?;
 
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            let sid: String = row.get(0)?;
-            let ts: String = row.get(1)?;
-            let label: String = row.get(2)?;
-            let is_auto: i32 = row.get(3)?;
-            let is_restored: i32 = row.get(4)?;
-            let apps_json: String = row.get(5)?;
-            let terms_json: String = row.get(6)?;
-            let plans_json: String = row.get(7)?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                let sid: String = row.get(0)?;
+                let ts: String = row.get(1)?;
+                let label: String = row.get(2)?;
+                let is_auto: i32 = row.get(3)?;
+                let is_restored: i32 = row.get(4)?;
+                let apps_json: String = row.get(5)?;
+                let terms_json: String = row.get(6)?;
+                let plans_json: String = row.get(7)?;
 
-            let apps: Vec<serde_json::Value> = serde_json::from_str(&apps_json).unwrap_or_default();
-            let terms: Vec<serde_json::Value> = serde_json::from_str(&terms_json).unwrap_or_default();
-            let plans: Vec<serde_json::Value> = serde_json::from_str(&plans_json).unwrap_or_default();
+                let apps: Vec<serde_json::Value> =
+                    serde_json::from_str(&apps_json).unwrap_or_default();
+                let terms: Vec<serde_json::Value> =
+                    serde_json::from_str(&terms_json).unwrap_or_default();
+                let plans: Vec<serde_json::Value> =
+                    serde_json::from_str(&plans_json).unwrap_or_default();
 
-            let created_at = DateTime::parse_from_rfc3339(&ts)
-                .ok()
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
+                let created_at = DateTime::parse_from_rfc3339(&ts)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now);
 
-            Ok(SnapshotSummary {
-                snapshot_id: Uuid::parse_str(&sid).unwrap_or_default(),
-                created_at,
-                label,
-                is_auto: is_auto != 0,
-                app_count: apps.len(),
-                terminal_count: terms.len(),
-                plan_count: plans.len(),
-                is_restored: is_restored != 0,
+                Ok(SnapshotSummary {
+                    snapshot_id: Uuid::parse_str(&sid).unwrap_or_default(),
+                    created_at,
+                    label,
+                    is_auto: is_auto != 0,
+                    app_count: apps.len(),
+                    terminal_count: terms.len(),
+                    plan_count: plans.len(),
+                    is_restored: is_restored != 0,
+                })
             })
-        }).map_err(|e| format!("Query failed: {e}"))?;
+            .map_err(|e| format!("Query failed: {e}"))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| format!("Row parse: {e}"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row parse: {e}"))
     }
 
     /// Mark a snapshot as having been restored.
@@ -188,17 +197,20 @@ impl SnapshotStore {
         conn.execute(
             "UPDATE workspace_snapshots SET is_restored = 1 WHERE snapshot_id = ?1",
             params![snapshot_id.to_string()],
-        ).map_err(|e| format!("Mark restored failed: {e}"))?;
+        )
+        .map_err(|e| format!("Mark restored failed: {e}"))?;
         Ok(())
     }
 
     /// Delete a snapshot.
     pub fn delete(&self, snapshot_id: &Uuid) -> Result<bool, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let deleted = conn.execute(
-            "DELETE FROM workspace_snapshots WHERE snapshot_id = ?1",
-            params![snapshot_id.to_string()],
-        ).map_err(|e| format!("Delete failed: {e}"))?;
+        let deleted = conn
+            .execute(
+                "DELETE FROM workspace_snapshots WHERE snapshot_id = ?1",
+                params![snapshot_id.to_string()],
+            )
+            .map_err(|e| format!("Delete failed: {e}"))?;
         Ok(deleted > 0)
     }
 
@@ -209,11 +221,11 @@ impl SnapshotStore {
         let cutoff = (Utc::now() - Duration::hours(48)).to_rfc3339();
 
         // Count total.
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM workspace_snapshots",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workspace_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap_or(0);
 
         // Keep at least 20 snapshots regardless of age.
         let deleted = if total > 20 {
@@ -225,7 +237,8 @@ impl SnapshotStore {
                      ORDER BY created_at DESC LIMIT 20
                  )",
                 params![cutoff],
-            ).map_err(|e| format!("Expire failed: {e}"))?
+            )
+            .map_err(|e| format!("Expire failed: {e}"))?
         } else {
             0
         };

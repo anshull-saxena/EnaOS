@@ -6,7 +6,6 @@
 /// - Minimal visual density (max 6 suggestions)
 /// - Stable suggestions (no flickering on identical results)
 /// - Sub-10ms latency feel (debounced IPC, cached results)
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -119,9 +118,16 @@ impl CommandPalette {
         let suggestions: Vec<_> = suggestions.into_iter().take(6).collect();
 
         // Stability check — compare IDs to avoid flickering.
-        let current_ids: Vec<String> = self.rows.borrow()
+        let current_ids: Vec<String> = self
+            .rows
+            .borrow()
             .iter()
-            .filter_map(|r| r.container.widget_name().strip_prefix("row-").map(String::from))
+            .filter_map(|r| {
+                r.container
+                    .widget_name()
+                    .strip_prefix("row-")
+                    .map(String::from)
+            })
             .collect();
         let new_ids: Vec<String> = suggestions.iter().map(|s| s.id.clone()).collect();
 
@@ -168,10 +174,10 @@ impl CommandPalette {
         };
 
         *self.selected_index.borrow_mut() = prev_selected;
-        if let Some(idx) = prev_selected {
-            if let Some(row) = rows.get(idx) {
-                row.container.add_css_class("ena-palette-row-selected");
-            }
+        if let Some(idx) = prev_selected
+            && let Some(row) = rows.get(idx)
+        {
+            row.container.add_css_class("ena-palette-row-selected");
         }
 
         // Show execution preview for initial selection.
@@ -215,10 +221,10 @@ impl CommandPalette {
             }
             gdk::Key::Tab => {
                 // Tab accepts the first suggestion.
-                if let Some(suggestion) = self.suggestions.borrow().first() {
-                    if let Some(ref cb) = *self.on_select.borrow() {
-                        cb(suggestion);
-                    }
+                if let Some(suggestion) = self.suggestions.borrow().first()
+                    && let Some(ref cb) = *self.on_select.borrow()
+                {
+                    cb(suggestion);
                 }
                 self.dismiss();
                 true
@@ -226,10 +232,10 @@ impl CommandPalette {
             gdk::Key::Return | gdk::Key::KP_Enter => {
                 if let Some(idx) = *selected {
                     let suggestions = self.suggestions.borrow();
-                    if let Some(suggestion) = suggestions.get(idx) {
-                        if let Some(ref cb) = *self.on_select.borrow() {
-                            cb(suggestion);
-                        }
+                    if let Some(suggestion) = suggestions.get(idx)
+                        && let Some(ref cb) = *self.on_select.borrow()
+                    {
+                        cb(suggestion);
                     }
                 }
                 self.dismiss();
@@ -257,7 +263,10 @@ impl CommandPalette {
             let suggestions = self.suggestions.borrow();
             if let Some(suggestion) = suggestions.get(idx) {
                 // Show action preview: "↳ {action} — {source}"
-                let preview = format!("\u{21B3} {} \u{2014} {}", suggestion.action, suggestion.source);
+                let preview = format!(
+                    "\u{21B3} {} \u{2014} {}",
+                    suggestion.action, suggestion.source
+                );
                 self.preview_label.set_label(&preview);
                 self.preview_revealer.set_reveal_child(true);
                 return;
@@ -288,7 +297,7 @@ impl CommandPalette {
     /// Build a single suggestion row.
     fn build_row(&self, suggestion: &CommandSuggestion, _index: usize) -> SuggestionRow {
         let icon_label = gtk4::Label::builder()
-            .label(&self.icon_for(&suggestion.icon))
+            .label(self.icon_for(&suggestion.icon))
             .css_classes(["ena-palette-icon"])
             .build();
 
@@ -332,18 +341,18 @@ impl CommandPalette {
         let gesture = gtk4::GestureClick::new();
         gesture.connect_pressed(move |_gesture, _n_press, _x, _y| {
             let suggestions_ref = suggestions.borrow();
-            if let Some(suggestion) = suggestions_ref.get(click_idx) {
-                if let Some(ref cb) = *on_select.borrow() {
-                    cb(suggestion);
-                }
+            if let Some(suggestion) = suggestions_ref.get(click_idx)
+                && let Some(ref cb) = *on_select.borrow()
+            {
+                cb(suggestion);
             }
             // Clear selection state.
             {
                 let rows_ref = rows.borrow();
-                if let Some(idx) = *selected_index.borrow() {
-                    if let Some(row) = rows_ref.get(idx) {
-                        row.container.remove_css_class("ena-palette-row-selected");
-                    }
+                if let Some(idx) = *selected_index.borrow()
+                    && let Some(row) = rows_ref.get(idx)
+                {
+                    row.container.remove_css_class("ena-palette-row-selected");
                 }
             }
             *selected_index.borrow_mut() = None;
@@ -361,15 +370,15 @@ impl CommandPalette {
 
     /// Update visual selection state.
     fn set_selected(&self, rows: &[SuggestionRow], old: Option<usize>, new: Option<usize>) {
-        if let Some(idx) = old {
-            if let Some(row) = rows.get(idx) {
-                row.container.remove_css_class("ena-palette-row-selected");
-            }
+        if let Some(idx) = old
+            && let Some(row) = rows.get(idx)
+        {
+            row.container.remove_css_class("ena-palette-row-selected");
         }
-        if let Some(idx) = new {
-            if let Some(row) = rows.get(idx) {
-                row.container.add_css_class("ena-palette-row-selected");
-            }
+        if let Some(idx) = new
+            && let Some(row) = rows.get(idx)
+        {
+            row.container.add_css_class("ena-palette-row-selected");
         }
         // Update execution preview.
         self.update_preview(new);

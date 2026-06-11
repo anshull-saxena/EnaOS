@@ -40,7 +40,10 @@ pub enum ActionType {
     /// Open a URL in the default browser.
     OpenUrl { url: String },
     /// Focus a window by app name or title substring.
-    FocusWindow { app: Option<String>, title: Option<String> },
+    FocusWindow {
+        app: Option<String>,
+        title: Option<String>,
+    },
     /// Launch a terminal command (supervised).
     LaunchCommand { command: String, args: Vec<String> },
     /// Switch to a workspace.

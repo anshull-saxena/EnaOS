@@ -49,11 +49,18 @@ impl OrchestrationEngine {
         if plan.requires_approval() {
             plan.status = PlanStatus::PendingApproval;
             state.pending_approval.push(plan);
-            self.emit_event(plan_id, PlanStatus::PendingApproval, "Plan requires approval");
+            self.emit_event(
+                plan_id,
+                PlanStatus::PendingApproval,
+                "Plan requires approval",
+            );
         } else {
             plan.status = PlanStatus::Approved;
             self.emit_event(plan_id, PlanStatus::Approved, "Plan auto-approved");
-            let handle = PlanHandle { plan, cancel_notify: Notify::new() };
+            let handle = PlanHandle {
+                plan,
+                cancel_notify: Notify::new(),
+            };
             state.active_plans.insert(plan_id, handle);
         }
 
@@ -73,7 +80,10 @@ impl OrchestrationEngine {
 
         self.emit_event(plan_id, PlanStatus::Approved, "Plan approved by user");
 
-        let handle = PlanHandle { plan, cancel_notify: Notify::new() };
+        let handle = PlanHandle {
+            plan,
+            cancel_notify: Notify::new(),
+        };
         {
             let mut state = self.state.lock().await;
             state.active_plans.insert(plan_id, handle);
@@ -119,7 +129,11 @@ impl OrchestrationEngine {
     /// List all plans.
     pub async fn list_plans(&self) -> Vec<ExecutionPlan> {
         let state = self.state.lock().await;
-        let mut plans: Vec<ExecutionPlan> = state.active_plans.values().map(|h| h.plan.clone()).collect();
+        let mut plans: Vec<ExecutionPlan> = state
+            .active_plans
+            .values()
+            .map(|h| h.plan.clone())
+            .collect();
         plans.extend(state.pending_approval.clone());
         plans
     }
@@ -130,7 +144,11 @@ impl OrchestrationEngine {
         if let Some(handle) = state.active_plans.get(&plan_id) {
             return Some(handle.plan.clone());
         }
-        state.pending_approval.iter().find(|p| p.id == plan_id).cloned()
+        state
+            .pending_approval
+            .iter()
+            .find(|p| p.id == plan_id)
+            .cloned()
     }
 
     // ── Execution logic (static, runs in spawned task) ────────
@@ -186,7 +204,8 @@ impl OrchestrationEngine {
             let action = plan.nodes[node_idx].action.clone();
             let max_retries = plan.nodes[node_idx].max_retries;
 
-            let result = execute_with_retries(&executor, plan_id, *node_id, &action, max_retries).await;
+            let result =
+                execute_with_retries(&executor, plan_id, *node_id, &action, max_retries).await;
 
             match result {
                 Ok(output) => {
@@ -210,16 +229,22 @@ impl OrchestrationEngine {
 
                     execute_rollbacks(&executor, &bus, plan_id, &rollback_nodes).await;
                     plan.status = PlanStatus::Failed;
-                    Self::emit_static(&bus, plan_id, PlanStatus::Failed, &format!("Node failed: {err}"));
+                    Self::emit_static(
+                        &bus,
+                        plan_id,
+                        PlanStatus::Failed,
+                        &format!("Node failed: {err}"),
+                    );
                     Self::save_plan_state(&state, &plan).await;
                     return;
                 }
             }
         }
 
-        let all_done = plan.nodes.iter().all(|n| {
-            matches!(n.status, NodeStatus::Completed | NodeStatus::Skipped)
-        });
+        let all_done = plan
+            .nodes
+            .iter()
+            .all(|n| matches!(n.status, NodeStatus::Completed | NodeStatus::Skipped));
 
         if all_done {
             plan.status = PlanStatus::Completed;
@@ -228,7 +253,12 @@ impl OrchestrationEngine {
         } else {
             plan.status = PlanStatus::Failed;
             plan.completed_at = Some(chrono::Utc::now());
-            Self::emit_static(&bus, plan_id, PlanStatus::Failed, "Plan completed with failures");
+            Self::emit_static(
+                &bus,
+                plan_id,
+                PlanStatus::Failed,
+                "Plan completed with failures",
+            );
         }
 
         Self::save_plan_state(&state, &plan).await;
@@ -331,7 +361,12 @@ async fn execute_rollbacks(
         return;
     }
 
-    OrchestrationEngine::emit_static(bus, plan_id, PlanStatus::RollingBack, "Rolling back completed actions");
+    OrchestrationEngine::emit_static(
+        bus,
+        plan_id,
+        PlanStatus::RollingBack,
+        "Rolling back completed actions",
+    );
 
     for (node_id, rollback_action) in completed.iter().rev() {
         info!("Plan {plan_id}: rollback node {node_id}");
@@ -344,12 +379,19 @@ async fn execute_rollbacks(
 }
 
 fn dependencies_met(node_id: &Uuid, plan: &ExecutionPlan) -> bool {
-    let deps: Vec<&Uuid> = plan.edges.iter().filter(|e| e.to == *node_id).map(|e| &e.from).collect();
+    let deps: Vec<&Uuid> = plan
+        .edges
+        .iter()
+        .filter(|e| e.to == *node_id)
+        .map(|e| &e.from)
+        .collect();
     if deps.is_empty() {
         return true;
     }
     deps.iter().all(|dep_id| {
-        plan.nodes.iter().any(|n| n.id == **dep_id && n.status == NodeStatus::Completed)
+        plan.nodes
+            .iter()
+            .any(|n| n.id == **dep_id && n.status == NodeStatus::Completed)
     })
 }
 
@@ -358,7 +400,12 @@ fn topological_sort(plan: &ExecutionPlan) -> Vec<Uuid> {
     let mut visited = std::collections::HashSet::new();
     let node_ids: Vec<Uuid> = plan.nodes.iter().map(|n| n.id).collect();
 
-    fn visit(n: Uuid, sorted: &mut Vec<Uuid>, visited: &mut std::collections::HashSet<Uuid>, edges: &[PlanEdge]) {
+    fn visit(
+        n: Uuid,
+        sorted: &mut Vec<Uuid>,
+        visited: &mut std::collections::HashSet<Uuid>,
+        edges: &[PlanEdge],
+    ) {
         if visited.contains(&n) {
             return;
         }

@@ -6,7 +6,6 @@
 /// 3. Executes the action handler
 /// 4. Emits lifecycle events (started, completed, failed, cancelled)
 /// 5. Tracks running actions for cancellation
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -73,7 +72,11 @@ impl ActionExecutor {
 
         // Emit ActionStarted event.
         let action_label = action_label(&request.action);
-        self.emit_event(action_id, ActionStatus::Running, &format!("Starting: {action_label}"));
+        self.emit_event(
+            action_id,
+            ActionStatus::Running,
+            &format!("Starting: {action_label}"),
+        );
 
         // Execute the action handler.
         let result = handlers::execute(&request.action).await;
@@ -93,7 +96,13 @@ impl ActionExecutor {
             }
             Err(error) => {
                 warn!("Action {action_id}: failed — {error}");
-                self.emit_event(action_id, ActionStatus::Failed { error: error.clone() }, &error);
+                self.emit_event(
+                    action_id,
+                    ActionStatus::Failed {
+                        error: error.clone(),
+                    },
+                    &error,
+                );
                 Err(error)
             }
         }
@@ -136,16 +145,11 @@ impl ActionExecutor {
                 action_id,
                 error: error.clone(),
             },
-            ActionStatus::Cancelled => EventPayload::ActionCancelled {
-                action_id,
-            },
+            ActionStatus::Cancelled => EventPayload::ActionCancelled { action_id },
         };
 
-        self.bus.publish(SystemEvent::new(
-            "actions",
-            EventKind::System,
-            payload,
-        ));
+        self.bus
+            .publish(SystemEvent::new("actions", EventKind::System, payload));
     }
 }
 
@@ -162,9 +166,12 @@ fn action_type_string(status: &ActionStatus) -> String {
 fn action_label(action: &ActionType) -> String {
     match action {
         ActionType::OpenApp { app } => format!("Open {app}"),
-        ActionType::OpenUrl { url: _ } => format!("Open URL"),
+        ActionType::OpenUrl { url: _ } => "Open URL".to_string(),
         ActionType::FocusWindow { app, title } => {
-            format!("Focus {}", app.as_deref().or(title.as_deref()).unwrap_or("window"))
+            format!(
+                "Focus {}",
+                app.as_deref().or(title.as_deref()).unwrap_or("window")
+            )
         }
         ActionType::LaunchCommand { command, .. } => format!("Run {command}"),
         ActionType::SwitchWorkspace { workspace } => format!("Switch to {workspace}"),

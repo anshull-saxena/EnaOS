@@ -1,5 +1,10 @@
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::empty_line_after_doc_comments)]
+
 mod actions;
 mod bus;
+mod context;
 mod first_run;
 mod hooks;
 mod memory;
@@ -8,7 +13,6 @@ mod process;
 mod restore;
 mod server;
 mod snapshot;
-mod context;
 mod suggestion;
 mod types;
 
@@ -68,10 +72,12 @@ async fn main() -> anyhow::Result<()> {
         Ok(store) => Arc::new(store),
         Err(e) => {
             tracing::warn!("Memory store failed to open: {e} — memory disabled");
-            Arc::new(memory::store::MemoryStore::open("/tmp/ena-memory.db").unwrap_or_else(|_| {
-                // Fallback: in-memory-like behavior with a tmp file.
-                panic!("Cannot initialize memory store: {e}");
-            }))
+            Arc::new(
+                memory::store::MemoryStore::open("/tmp/ena-memory.db").unwrap_or_else(|_| {
+                    // Fallback: in-memory-like behavior with a tmp file.
+                    panic!("Cannot initialize memory store: {e}");
+                }),
+            )
         }
     };
     let memory_capture = memory::capture::MemoryCapture::new(memory_store.clone());
@@ -82,9 +88,13 @@ async fn main() -> anyhow::Result<()> {
         Ok(store) => Arc::new(store),
         Err(e) => {
             tracing::warn!("Snapshot store failed to open: {e} — snapshots disabled");
-            Arc::new(snapshot::store::SnapshotStore::open("/tmp/ena-snapshots.db").unwrap_or_else(|_| {
-                panic!("Cannot initialize snapshot store: {e}");
-            }))
+            Arc::new(
+                snapshot::store::SnapshotStore::open("/tmp/ena-snapshots.db").unwrap_or_else(
+                    |_| {
+                        panic!("Cannot initialize snapshot store: {e}");
+                    },
+                ),
+            )
         }
     };
     let snapshot_capture = snapshot::capture::SnapshotCapture::new(
@@ -99,9 +109,13 @@ async fn main() -> anyhow::Result<()> {
         Ok(store) => Arc::new(store),
         Err(e) => {
             tracing::warn!("Suggestion store failed to open: {e} — suggestions disabled");
-            Arc::new(suggestion::store::SuggestionStore::open("/tmp/ena-suggestions.db").unwrap_or_else(|_| {
-                panic!("Cannot initialize suggestion store: {e}");
-            }))
+            Arc::new(
+                suggestion::store::SuggestionStore::open("/tmp/ena-suggestions.db").unwrap_or_else(
+                    |_| {
+                        panic!("Cannot initialize suggestion store: {e}");
+                    },
+                ),
+            )
         }
     };
     let suggestion_engine = Arc::new(suggestion::engine::SuggestionEngine::new(
@@ -128,7 +142,15 @@ async fn main() -> anyhow::Result<()> {
 
     // ── IPC server ──
     let server = server::IpcServer::bind(
-        &cli.socket, bus.clone(), action_executor.clone(), memory_store.clone(), snapshot_store.clone(), orchestration.clone(), suggestion_engine.clone(), context_engine.clone(), first_run_manager.clone(),
+        &cli.socket,
+        bus.clone(),
+        action_executor.clone(),
+        memory_store.clone(),
+        snapshot_store.clone(),
+        orchestration.clone(),
+        suggestion_engine.clone(),
+        context_engine.clone(),
+        first_run_manager.clone(),
     )?;
     let shutdown_handle = server.shutdown_handle();
 
@@ -274,7 +296,10 @@ async fn main() -> anyhow::Result<()> {
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let kind = serde_json::to_value(&event.kind).ok().and_then(|v| v.as_str().map(|s| s.to_string())).unwrap_or_default();
+                    let kind = serde_json::to_value(&event.kind)
+                        .ok()
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
                     let payload = serde_json::to_value(&event.payload).unwrap_or_default();
                     context_clone.on_event(&kind, &payload);
                 }
@@ -300,13 +325,15 @@ async fn main() -> anyhow::Result<()> {
 
             // Pull recent intents from memory.
             let intents_q = crate::memory::types::MemoryQuery::intents();
-            let recent_intents: Vec<String> = ctx_mem.query(&intents_q)
+            let recent_intents: Vec<String> = ctx_mem
+                .query(&intents_q)
                 .ok()
                 .map(|entries| entries.iter().map(|e| e.summary.clone()).take(10).collect())
                 .unwrap_or_default();
 
             let actions_q = crate::memory::types::MemoryQuery::actions();
-            let recent_actions: Vec<String> = ctx_mem.query(&actions_q)
+            let recent_actions: Vec<String> = ctx_mem
+                .query(&actions_q)
                 .ok()
                 .map(|entries| entries.iter().map(|e| e.summary.clone()).take(5).collect())
                 .unwrap_or_default();
@@ -326,13 +353,19 @@ async fn main() -> anyhow::Result<()> {
                 .collect();
 
             // Pull recent snapshots.
-            let recent_snapshots: Vec<crate::context::aggregator::RecentSnapshot> = ctx_snaps.list(5)
+            let recent_snapshots: Vec<crate::context::aggregator::RecentSnapshot> = ctx_snaps
+                .list(5)
                 .ok()
-                .map(|snaps| snaps.into_iter().map(|s| crate::context::aggregator::RecentSnapshot {
-                    id: s.snapshot_id.to_string(),
-                    label: s.label.clone(),
-                    taken_at: s.created_at.to_rfc3339(),
-                }).collect())
+                .map(|snaps| {
+                    snaps
+                        .into_iter()
+                        .map(|s| crate::context::aggregator::RecentSnapshot {
+                            id: s.snapshot_id.to_string(),
+                            label: s.label.clone(),
+                            taken_at: s.created_at.to_rfc3339(),
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
 
             context_refresh.refresh(

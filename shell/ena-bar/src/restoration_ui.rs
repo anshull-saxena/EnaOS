@@ -53,7 +53,7 @@ fn relative_time(iso: &str) -> String {
     // Handle timezone offset: "-05:00" after the time
     // Just take the first part before any + or - (but after T)
     // Format: HH:MM:SS or HH:MM:SS.xxxxxx
-    let time_clean = if let Some(idx) = time_part.rfind(|c| c == '+' || c == '-') {
+    let time_clean = if let Some(idx) = time_part.rfind(['+', '-']) {
         if idx > 8 {
             // It's a timezone offset, not part of a date
             &time_part[..idx]
@@ -91,7 +91,12 @@ fn relative_time(iso: &str) -> String {
         Err(_) => return String::new(),
     };
     let second: u32 = if parts.len() > 2 {
-        parts[2].split('.').next().unwrap_or("0").parse().unwrap_or(0)
+        parts[2]
+            .split('.')
+            .next()
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0)
     } else {
         0
     };
@@ -107,7 +112,15 @@ fn relative_time(iso: &str) -> String {
     let y = year - if month <= 2 { 1 } else { 0 };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
-    let doy = (153 * if month > 2 { month as i64 - 3 } else { month as i64 + 9 } + 2) / 5 + day as i64 - 1;
+    let doy =
+        (153 * if month > 2 {
+            month as i64 - 3
+        } else {
+            month as i64 + 9
+        } + 2)
+            / 5
+            + day as i64
+            - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146097 + doe - 719468;
     let then = days * 86400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64;
@@ -127,13 +140,22 @@ fn relative_time(iso: &str) -> String {
 /// Parse a snapshot JSON value into SnapshotSummary.
 fn parse_snapshot(snap: &Value) -> SnapshotSummary {
     SnapshotSummary {
-        id: snap.get("snapshot_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        label: snap.get("label").and_then(|v| v.as_str()).unwrap_or("Workspace").to_string(),
-        created_at: snap.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        window_count: snap
-            .get("app_count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0),
+        id: snap
+            .get("snapshot_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        label: snap
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Workspace")
+            .to_string(),
+        created_at: snap
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        window_count: snap.get("app_count").and_then(|v| v.as_i64()).unwrap_or(0),
         terminal_count: snap
             .get("terminal_count")
             .and_then(|v| v.as_i64())
@@ -149,12 +171,29 @@ fn parse_preview_actions(data: &Value) -> Vec<PreviewAction> {
         .map(|arr| {
             arr.iter()
                 .map(|a| PreviewAction {
-                    id: format!("{}-{}",
-                        a.get("action_type").and_then(|v| v.as_str()).unwrap_or("action"),
-                        a.get("target").and_then(|v| v.as_str()).unwrap_or("unknown")),
-                    action_type: a.get("action_type").and_then(|v| v.as_str()).unwrap_or("Action").to_string(),
-                    label: a.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    safe: !a.get("requires_approval").and_then(|v| v.as_bool()).unwrap_or(false),
+                    id: format!(
+                        "{}-{}",
+                        a.get("action_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("action"),
+                        a.get("target")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    ),
+                    action_type: a
+                        .get("action_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Action")
+                        .to_string(),
+                    label: a
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    safe: !a
+                        .get("requires_approval")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                     selected: true,
                 })
                 .collect()
@@ -172,9 +211,7 @@ fn parse_preview_actions(data: &Value) -> Vec<PreviewAction> {
 fn get_response_body(response: &Value) -> Option<&Value> {
     let kind = response.get("kind")?;
     let body = kind.get("body")?;
-    body.get("Ok")
-        .or_else(|| body.get("Data"))
-        .or(Some(body))
+    body.get("Ok").or_else(|| body.get("Data")).or(Some(body))
 }
 
 fn extract_snapshots(response: &Value) -> Vec<Value> {
@@ -205,8 +242,7 @@ fn extract_preview(response: &Value) -> Option<Vec<PreviewAction>> {
     let actions = parse_preview_actions(payload);
     if actions.is_empty() {
         // Try nested in "preview".
-        payload.get("preview")
-            .map(|p| parse_preview_actions(p))
+        payload.get("preview").map(parse_preview_actions)
     } else {
         Some(actions)
     }
@@ -266,9 +302,7 @@ impl RestorationWidget {
             .build();
         suggestion_label.add_css_class("ena-restore-suggestion-label");
 
-        let suggestion_time = gtk4::Label::builder()
-            .xalign(1.0)
-            .build();
+        let suggestion_time = gtk4::Label::builder().xalign(1.0).build();
         suggestion_time.add_css_class("ena-restore-time");
 
         let suggestion_box = gtk4::Box::builder()
@@ -435,7 +469,8 @@ impl RestorationWidget {
                 if let Some(actions) = extract_preview(&response) {
                     self.show_preview(actions);
                 } else {
-                    self.preview_title.set_label("Failed to load preview — no actions available");
+                    self.preview_title
+                        .set_label("Failed to load preview — no actions available");
                     self.restore_button.set_sensitive(true);
                 }
             }
@@ -461,11 +496,8 @@ impl RestorationWidget {
         let path = self.socket_path.lock().unwrap().clone();
         let tx = self.cmd_tx.clone();
         std::thread::spawn(move || {
-            let result = ipc::send_command(
-                &path,
-                "ListSnapshots",
-                &serde_json::json!({"limit": 1}),
-            );
+            let result =
+                ipc::send_command(&path, "ListSnapshots", &serde_json::json!({"limit": 1}));
             match result {
                 Ok(mut response) => {
                     response["_command"] = serde_json::json!("ListSnapshots");
@@ -559,17 +591,12 @@ impl RestorationWidget {
         self.action_list.set_visible(true);
         self.restore_button.set_sensitive(true);
 
-        *self.state.lock().unwrap() = RestorationState::Preview {
-            summary,
-            actions,
-        };
+        *self.state.lock().unwrap() = RestorationState::Preview { summary, actions };
     }
 
     /// Build a single action row with toggle.
     fn build_action_row(&self, action: &PreviewAction) -> gtk4::Box {
-        let check = gtk4::CheckButton::builder()
-            .active(action.selected)
-            .build();
+        let check = gtk4::CheckButton::builder().active(action.selected).build();
 
         let type_label = gtk4::Label::builder()
             .label(&action.action_type)
@@ -623,16 +650,14 @@ impl RestorationWidget {
         let mut idx = 0usize;
         while let Some(row) = child {
             // Use reference-based downcast to avoid moving `row`.
-            if let Some(box_row) = row.downcast_ref::<gtk4::Box>() {
-                if let Some(check) = box_row.first_child()
+            if let Some(box_row) = row.downcast_ref::<gtk4::Box>()
+                && let Some(check) = box_row
+                    .first_child()
                     .and_then(|c| c.downcast::<gtk4::CheckButton>().ok())
-                {
-                    if check.is_active() {
-                        if let Some(action) = actions.get(idx) {
-                            ids.push(action.id.clone());
-                        }
-                    }
-                }
+                && check.is_active()
+                && let Some(action) = actions.get(idx)
+            {
+                ids.push(action.id.clone());
             }
             child = row.next_sibling();
             idx += 1;

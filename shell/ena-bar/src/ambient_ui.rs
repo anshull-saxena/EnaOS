@@ -144,9 +144,10 @@ impl AmbientSuggestionWidget {
     fn current_action(&self) -> (String, String) {
         let state = self.state.lock().unwrap();
         match &*state {
-            DisplayState::Showing { suggestion, .. } => {
-                (suggestion.id.clone(), suggestion.action_type.clone().unwrap_or_default())
-            }
+            DisplayState::Showing { suggestion, .. } => (
+                suggestion.id.clone(),
+                suggestion.action_type.clone().unwrap_or_default(),
+            ),
             DisplayState::Hidden => (String::new(), String::new()),
         }
     }
@@ -183,18 +184,22 @@ impl AmbientSuggestionWidget {
     /// Poll auto-dismiss. Call from idle handler.
     pub fn poll_auto_dismiss(&self) {
         let mut state = self.state.lock().unwrap();
-        if let DisplayState::Showing { started_at, expiry_ms, .. } = &*state {
-            if started_at.elapsed().as_millis() as u64 >= *expiry_ms {
-                let sid = match &*state {
-                    DisplayState::Showing { suggestion, .. } => suggestion.id.clone(),
-                    _ => return,
-                };
-                *state = DisplayState::Hidden;
-                drop(state);
-                self.revealer.set_reveal_child(false);
-                if let Some(ref cb) = *self.on_dismiss.lock().unwrap() {
-                    cb(sid);
-                }
+        if let DisplayState::Showing {
+            started_at,
+            expiry_ms,
+            ..
+        } = &*state
+            && started_at.elapsed().as_millis() as u64 >= *expiry_ms
+        {
+            let sid = match &*state {
+                DisplayState::Showing { suggestion, .. } => suggestion.id.clone(),
+                _ => return,
+            };
+            *state = DisplayState::Hidden;
+            drop(state);
+            self.revealer.set_reveal_child(false);
+            if let Some(ref cb) = *self.on_dismiss.lock().unwrap() {
+                cb(sid);
             }
         }
     }
@@ -227,12 +232,34 @@ pub(crate) fn parse_suggestion_event(payload: &Value) -> Option<AmbientSuggestio
     // The suggestion data is in the payload after the type discriminator.
     // Event payload format: {"type": "SuggestionGenerated", "data": {...}}
     Some(AmbientSuggestion {
-        id: data.get("suggestion_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        kind: data.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        title: data.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        description: data.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        id: data
+            .get("suggestion_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        kind: data
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        title: data
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        description: data
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         priority: data.get("priority").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        action_label: data.get("action_label").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        action_type: data.get("action_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        action_label: data
+            .get("action_label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        action_type: data
+            .get("action_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }

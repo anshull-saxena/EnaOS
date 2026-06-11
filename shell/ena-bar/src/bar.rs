@@ -1,16 +1,18 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use gtk4::prelude::*;
 use gtk4::gdk;
 use gtk4::glib;
+use gtk4::prelude::*;
 use serde_json::Value;
 
 use crate::ambient_ui::{AmbientSuggestionWidget, parse_suggestion_event};
 use crate::command_palette::CommandPalette;
 use crate::ipc::EnadEvent;
-use crate::orchestration_ui::{TimelineWidget, OrchestrationDisplay, parse_plan_event, parse_node_event};
+use crate::orchestration_ui::{
+    OrchestrationDisplay, TimelineWidget, parse_node_event, parse_plan_event,
+};
 use crate::restoration_ui::RestorationWidget;
 use crate::welcome_overlay::WelcomeOverlay;
 
@@ -337,7 +339,10 @@ impl EnaBar {
             std::rc::Rc::new(std::cell::RefCell::new(None));
         let query_generation: std::rc::Rc<std::cell::Cell<u64>> =
             std::rc::Rc::new(std::cell::Cell::new(0));
-        let (palette_tx, palette_rx) = mpsc::channel::<(u64, Result<Vec<crate::command_palette::CommandSuggestion>, String>)>();
+        let (palette_tx, palette_rx) = mpsc::channel::<(
+            u64,
+            Result<Vec<crate::command_palette::CommandSuggestion>, String>,
+        )>();
 
         // Poll palette results channel on GTK main loop.
         let poll_palette = cp_palette.clone();
@@ -381,32 +386,33 @@ impl EnaBar {
             query_generation.set(this_generation);
 
             // Debounce: 40ms after last keystroke before fetching.
-            let new_id = glib::timeout_add_local_once(std::time::Duration::from_millis(40), move || {
-                let trimmed = text.trim();
-                if trimmed.len() < 2 {
-                    return;
-                }
+            let new_id =
+                glib::timeout_add_local_once(std::time::Duration::from_millis(40), move || {
+                    let trimmed = text.trim();
+                    if trimmed.len() < 2 {
+                        return;
+                    }
 
-                crate::timing::mark_debounce_end();
+                    crate::timing::mark_debounce_end();
 
-                // Spawn background thread for IPC — zero GTK main thread blocking.
-                // Only Send-safe data moves into the thread.
-                let socket_bg = socket.clone();
-                let query_bg = trimmed.to_string();
-                let qgen_bg = this_generation;
-                let tx_bg = tx.clone();
+                    // Spawn background thread for IPC — zero GTK main thread blocking.
+                    // Only Send-safe data moves into the thread.
+                    let socket_bg = socket.clone();
+                    let query_bg = trimmed.to_string();
+                    let qgen_bg = this_generation;
+                    let tx_bg = tx.clone();
 
-                crate::timing::mark_ipc_start();
+                    crate::timing::mark_ipc_start();
 
-                std::thread::spawn(move || {
-                    let result = crate::ipc::get_context_commands(&socket_bg, &query_bg, 6);
+                    std::thread::spawn(move || {
+                        let result = crate::ipc::get_context_commands(&socket_bg, &query_bg, 6);
 
-                    crate::timing::mark_ipc_end();
+                        crate::timing::mark_ipc_end();
 
-                    // Send result back to main thread via channel.
-                    let _ = tx_bg.send((qgen_bg, result));
+                        // Send result back to main thread via channel.
+                        let _ = tx_bg.send((qgen_bg, result));
+                    });
                 });
-            });
             *debounce_id.borrow_mut() = Some(new_id);
         });
 
@@ -485,11 +491,12 @@ impl EnaBar {
         }));
 
         let _act_socket = socket_path.to_string();
-        *bar.ambient.on_act.lock().unwrap() = Some(Box::new(move |_suggestion_id, _action_type| {
-            tracing::info!("Ambient action: {_action_type} on {_suggestion_id}");
-            // Future: trigger action execution via IPC.
-            // Dismiss is handled in the widget immediately.
-        }));
+        *bar.ambient.on_act.lock().unwrap() =
+            Some(Box::new(move |_suggestion_id, _action_type| {
+                tracing::info!("Ambient action: {_action_type} on {_suggestion_id}");
+                // Future: trigger action execution via IPC.
+                // Dismiss is handled in the widget immediately.
+            }));
 
         bar
     }
@@ -651,11 +658,8 @@ impl EnaBar {
                         });
                     }
                     "system_info" => {
-                        if let Some(hostname) =
-                            payload.get("hostname").and_then(|v| v.as_str())
-                        {
-                            self.status_label
-                                .set_label(&format!("enad: {hostname}"));
+                        if let Some(hostname) = payload.get("hostname").and_then(|v| v.as_str()) {
+                            self.status_label.set_label(&format!("enad: {hostname}"));
                         }
                     }
                     _ => {}
@@ -829,7 +833,10 @@ impl EnaBar {
                             // Build an initial display with just the plan info.
                             let display = OrchestrationDisplay {
                                 plan_id: Some(plan_id.clone()),
-                                plan_title: message.trim_start_matches("Plan requires approval").trim().to_string(),
+                                plan_title: message
+                                    .trim_start_matches("Plan requires approval")
+                                    .trim()
+                                    .to_string(),
                                 status: "PendingApproval".to_string(),
                                 message: "Requires approval".to_string(),
                                 nodes: Vec::new(),
@@ -994,34 +1001,31 @@ impl EnaBar {
         // Unix socket IPC is typically <5ms, so this is generous.
         use std::cell::Cell;
         let retries = Cell::new(0);
-        glib::timeout_add_local(
-            std::time::Duration::from_millis(100),
-            move || {
-                retries.set(retries.get() + 1);
-                if retries.get() > 30 {
-                    tracing::info!("First-run check exhausted (3s timeout)");
-                    return glib::ControlFlow::Break;
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            retries.set(retries.get() + 1);
+            if retries.get() > 30 {
+                tracing::info!("First-run check exhausted (3s timeout)");
+                return glib::ControlFlow::Break;
+            }
+            match rx.try_recv() {
+                Ok(true) => {
+                    wo.show();
+                    glib::ControlFlow::Break
                 }
-                match rx.try_recv() {
-                    Ok(true) => {
-                        wo.show();
-                        glib::ControlFlow::Break
-                    }
-                    Ok(false) => {
-                        tracing::info!("Not first launch — onboarding skipped");
-                        glib::ControlFlow::Break
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        // Not ready yet, retry.
-                        glib::ControlFlow::Continue
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        // Sender dropped (IPC thread panicked or closed).
-                        glib::ControlFlow::Break
-                    }
+                Ok(false) => {
+                    tracing::info!("Not first launch — onboarding skipped");
+                    glib::ControlFlow::Break
                 }
-            },
-        );
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Not ready yet, retry.
+                    glib::ControlFlow::Continue
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Sender dropped (IPC thread panicked or closed).
+                    glib::ControlFlow::Break
+                }
+            }
+        });
     }
 
     /// Access the welcome overlay for external dismissal.

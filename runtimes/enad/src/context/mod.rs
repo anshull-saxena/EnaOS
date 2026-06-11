@@ -11,7 +11,6 @@
 /// - Intent-driven ranking (continue -> workflows, restore -> snapshots)
 /// - Conservative context augmentation (never invents workflows)
 /// - Sub-10ms latency (cached aggregation, no live queries)
-
 pub mod aggregator;
 pub mod classifier;
 pub mod ranker;

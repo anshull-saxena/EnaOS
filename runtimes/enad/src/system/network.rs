@@ -14,7 +14,6 @@
 ///   10 = asleep, 20 = disconnected, 30 = disconnecting,
 ///   40 = connecting, 50 = connected-local, 60 = connected-site,
 ///   70 = connected-global
-
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -145,11 +144,7 @@ pub async fn run(bus: Arc<EventBus>) {
     }
 }
 
-async fn emit_state(
-    bus: &EventBus,
-    conn: &Connection,
-    nm: &NetworkManagerInterfaceProxy<'_>,
-) {
+async fn emit_state(bus: &EventBus, conn: &Connection, nm: &NetworkManagerInterfaceProxy<'_>) {
     let state = nm.state().await.unwrap_or(20);
     let (label, connected) = state_label(state);
 
@@ -170,16 +165,30 @@ async fn emit_state(
                                     if let Ok(builder) = WirelessDeviceProxy::builder(conn) {
                                         if let Ok(builder) = builder.path(dev_path.clone()) {
                                             if let Ok(wdev) = builder.build().await {
-                                                if let Ok(ap_path) = wdev.active_access_point().await {
+                                                if let Ok(ap_path) =
+                                                    wdev.active_access_point().await
+                                                {
                                                     if ap_path.as_str() != "/" {
                                                         // Build AccessPoint proxy from AP path.
-                                                        if let Ok(builder) = AccessPointProxy::builder(conn) {
-                                                            if let Ok(builder) = builder.path(ap_path) {
-                                                                if let Ok(ap) = builder.build().await {
-                                                                    if let Ok(raw_ssid) = ap.ssid().await {
-                                                                        ssid = Some(decode_ssid(raw_ssid));
+                                                        if let Ok(builder) =
+                                                            AccessPointProxy::builder(conn)
+                                                        {
+                                                            if let Ok(builder) =
+                                                                builder.path(ap_path)
+                                                            {
+                                                                if let Ok(ap) =
+                                                                    builder.build().await
+                                                                {
+                                                                    if let Ok(raw_ssid) =
+                                                                        ap.ssid().await
+                                                                    {
+                                                                        ssid = Some(decode_ssid(
+                                                                            raw_ssid,
+                                                                        ));
                                                                     }
-                                                                    if let Ok(s) = ap.strength().await {
+                                                                    if let Ok(s) =
+                                                                        ap.strength().await
+                                                                    {
                                                                         strength = Some(s);
                                                                     }
                                                                 }
@@ -199,7 +208,10 @@ async fn emit_state(
         }
     }
 
-    info!("NetworkManager: {label}{}", ssid.as_ref().map(|s| format!(" — {s}")).unwrap_or_default());
+    info!(
+        "NetworkManager: {label}{}",
+        ssid.as_ref().map(|s| format!(" — {s}")).unwrap_or_default()
+    );
 
     bus.publish(SystemEvent::new(
         "networkmanager",

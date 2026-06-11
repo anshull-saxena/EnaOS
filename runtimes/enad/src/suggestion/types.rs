@@ -119,8 +119,8 @@ pub struct ContextWindow {
     pub workspace: String,
     pub recent_events: Vec<ContextEvent>,
     pub idle_duration_secs: u64,
-    pub time_label: String,    // "morning", "afternoon", "evening", "night"
-    pub day_label: String,     // "weekday", "weekend"
+    pub time_label: String, // "morning", "afternoon", "evening", "night"
+    pub day_label: String,  // "weekday", "weekend"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

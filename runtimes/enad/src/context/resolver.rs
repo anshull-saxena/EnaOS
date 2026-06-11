@@ -10,14 +10,13 @@
 ///
 /// Each candidate has a base score (0.0-1.0) that the ranker
 /// will adjust with intent bias and confidence thresholding.
-
 use std::sync::Arc;
 
 use uuid::Uuid;
 
-use super::aggregator::{ContextAggregator, AggregatedContext};
-use super::classifier::{ClassifiedIntent, IntentType};
 use super::CommandSuggestion;
+use super::aggregator::{AggregatedContext, ContextAggregator};
+use super::classifier::{ClassifiedIntent, IntentType};
 
 pub struct CommandResolver {
     aggregator: Arc<ContextAggregator>,
@@ -67,7 +66,10 @@ impl CommandResolver {
 
             // Only surface if there's some relevance or intent match.
             if similarity > 0.1
-                || matches!(_intent.intent_type, IntentType::Continue | IntentType::Restore)
+                || matches!(
+                    _intent.intent_type,
+                    IntentType::Continue | IntentType::Restore
+                )
             {
                 let subtitle = match plan.status.as_str() {
                     "PendingApproval" => "Requires approval".to_string(),
@@ -105,7 +107,10 @@ impl CommandResolver {
             let similarity = fuzzy_score(query, &label_lower);
 
             if similarity > 0.1
-                || matches!(_intent.intent_type, IntentType::Restore | IntentType::Continue)
+                || matches!(
+                    _intent.intent_type,
+                    IntentType::Restore | IntentType::Continue
+                )
             {
                 results.push(CommandSuggestion {
                     id: Uuid::new_v4().to_string(),
@@ -146,7 +151,11 @@ impl CommandResolver {
 
             for (keyword, name, action_type) in common_apps {
                 if query.contains(keyword) || query.is_empty() {
-                    let sim = if query.is_empty() { 0.1 } else { fuzzy_score(query, keyword) };
+                    let sim = if query.is_empty() {
+                        0.1
+                    } else {
+                        fuzzy_score(query, keyword)
+                    };
                     if sim > 0.0 {
                         results.push(CommandSuggestion {
                             id: Uuid::new_v4().to_string(),
@@ -183,7 +192,10 @@ impl CommandResolver {
         }
 
         // Media control if something is playing.
-        if !ctx.desktop.media_player.is_empty() && query.contains("media") || query.contains("music") || query.contains("play") {
+        if !ctx.desktop.media_player.is_empty() && query.contains("media")
+            || query.contains("music")
+            || query.contains("play")
+        {
             results.push(CommandSuggestion {
                 id: Uuid::new_v4().to_string(),
                 label: format!("Pause {}", ctx.desktop.media_player),
@@ -204,7 +216,7 @@ impl CommandResolver {
         &self,
         query: &str,
         ctx: &AggregatedContext,
-        intent: &ClassifiedIntent,
+        _intent: &ClassifiedIntent,
     ) -> Vec<CommandSuggestion> {
         let mut results = Vec::new();
 
@@ -239,7 +251,7 @@ impl CommandResolver {
         &self,
         query: &str,
         ctx: &AggregatedContext,
-        intent: &ClassifiedIntent,
+        _intent: &ClassifiedIntent,
     ) -> Vec<CommandSuggestion> {
         let mut results = Vec::new();
 
@@ -317,7 +329,7 @@ fn format_timestamp(rfc3339: &str) -> String {
     // For now, just return a shortened version.
     if rfc3339.len() > 19 {
         let date_part = &rfc3339[..19];
-        format!("{}", date_part.replace('T', " "))
+        date_part.replace('T', " ").to_string()
     } else {
         rfc3339.to_string()
     }

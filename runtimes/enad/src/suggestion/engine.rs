@@ -10,9 +10,7 @@ use crate::types::events::{EventKind, EventPayload, SystemEvent};
 use crate::types::ipc::Response;
 
 use super::store::SuggestionStore;
-use super::types::{
-    ContextEvent, ContextWindow, Suggestion, SuggestionAction, SuggestionKind,
-};
+use super::types::{ContextEvent, ContextWindow, Suggestion, SuggestionAction, SuggestionKind};
 
 /// Minimum priority threshold for a suggestion to be surfaced.
 const MIN_PRIORITY: f64 = 0.4;
@@ -96,10 +94,10 @@ impl SuggestionEngine {
         let now = Utc::now();
         let cooldown = Duration::seconds(30);
 
-        if let Some(last) = last_times.get(trigger) {
-            if now.signed_duration_since(*last) < cooldown {
-                return;
-            }
+        if let Some(last) = last_times.get(trigger)
+            && now.signed_duration_since(*last) < cooldown
+        {
+            return;
         }
         last_times.insert(trigger.to_string(), now);
         drop(last_times);
@@ -146,7 +144,9 @@ impl SuggestionEngine {
 
                 info!(
                     "Ambient suggestion: {} (priority={:.2}, kind={})",
-                    s.title, s.priority, s.kind.as_str()
+                    s.title,
+                    s.priority,
+                    s.kind.as_str()
                 );
             }
         }
@@ -264,10 +264,10 @@ impl SuggestionEngine {
                     window.focused_title = title.to_string();
                 }
             }
-            if window.workspace.is_empty() {
-                if let Some(ws) = event.data.get("workspace").and_then(|v| v.as_str()) {
-                    window.workspace = ws.to_string();
-                }
+            if window.workspace.is_empty()
+                && let Some(ws) = event.data.get("workspace").and_then(|v| v.as_str())
+            {
+                window.workspace = ws.to_string();
             }
         }
 
@@ -290,7 +290,11 @@ impl SuggestionEngine {
     }
 
     /// Workspace continuity: a new workspace was focused — suggest returning or continuing.
-    fn rule_workspace_continuity(&self, ctx: &ContextWindow, now: DateTime<Utc>) -> Option<Suggestion> {
+    fn rule_workspace_continuity(
+        &self,
+        ctx: &ContextWindow,
+        now: DateTime<Utc>,
+    ) -> Option<Suggestion> {
         if ctx.workspace.is_empty() {
             return None;
         }
@@ -337,11 +341,26 @@ impl SuggestionEngine {
         }
 
         let (title, description) = match (ctx.time_label.as_str(), ctx.day_label.as_str()) {
-            ("morning", "weekday") => ("Good morning — ready to work?".to_string(), "You have a full day ahead. What's first?".to_string()),
-            ("morning", "weekend") => ("Good morning — weekend mode.".to_string(), "A slower pace today. Let me know if you need anything.".to_string()),
-            ("afternoon", _) => ("Afternoon session.".to_string(), "Keep the momentum going.".to_string()),
-            ("evening", _) => ("Evening — wrapping up?".to_string(), "Finish strong or pick up tomorrow.".to_string()),
-            ("night", _) => ("Late night session.".to_string(), "Don't forget to rest. I'll be here.".to_string()),
+            ("morning", "weekday") => (
+                "Good morning — ready to work?".to_string(),
+                "You have a full day ahead. What's first?".to_string(),
+            ),
+            ("morning", "weekend") => (
+                "Good morning — weekend mode.".to_string(),
+                "A slower pace today. Let me know if you need anything.".to_string(),
+            ),
+            ("afternoon", _) => (
+                "Afternoon session.".to_string(),
+                "Keep the momentum going.".to_string(),
+            ),
+            ("evening", _) => (
+                "Evening — wrapping up?".to_string(),
+                "Finish strong or pick up tomorrow.".to_string(),
+            ),
+            ("night", _) => (
+                "Late night session.".to_string(),
+                "Don't forget to rest. I'll be here.".to_string(),
+            ),
             _ => return None,
         };
 
@@ -368,7 +387,10 @@ impl SuggestionEngine {
         let priority = 0.50;
 
         let title = format!("Working in {}", ctx.focused_app);
-        let description = format!("You're focused on {}. Need related resources?", ctx.focused_app);
+        let description = format!(
+            "You're focused on {}. Need related resources?",
+            ctx.focused_app
+        );
 
         Some(Suggestion {
             id: Uuid::new_v4(),
@@ -413,7 +435,10 @@ impl SuggestionEngine {
             }
         };
 
-        match self.store.record_dismissal(suggestion_id, &kind, &context_hash, permanent) {
+        match self
+            .store
+            .record_dismissal(suggestion_id, &kind, &context_hash, permanent)
+        {
             Ok(()) => Response::Ok {
                 message: Some("Suggestion dismissed".into()),
             },
@@ -426,15 +451,15 @@ impl SuggestionEngine {
 
     /// Periodically clean up expired entries.
     pub fn cleanup(&self) {
-        if let Ok(n) = self.store.expire() {
-            if n > 0 {
-                info!("Expired {n} old suggestions");
-            }
+        if let Ok(n) = self.store.expire()
+            && n > 0
+        {
+            info!("Expired {n} old suggestions");
         }
-        if let Ok(n) = self.store.expire_dismissals() {
-            if n > 0 {
-                info!("Expired {n} old dismissal records");
-            }
+        if let Ok(n) = self.store.expire_dismissals()
+            && n > 0
+        {
+            info!("Expired {n} old dismissal records");
         }
     }
 }

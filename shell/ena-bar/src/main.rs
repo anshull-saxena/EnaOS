@@ -1,10 +1,15 @@
+#![allow(clippy::empty_line_after_doc_comments)]
+#![allow(dead_code)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use clap::Parser;
 use gtk4::prelude::*;
-use gtk4::{gdk, glib, EventControllerKey};
+use gtk4::{EventControllerKey, gdk, glib};
 use tracing_subscriber::EnvFilter;
 
 mod ambient_ui;
@@ -23,7 +28,7 @@ mod welcome_overlay;
 /// Load embedded CSS stylesheet.
 fn load_style() {
     let provider = gtk4::CssProvider::new();
-    provider.load_from_string(include_str!("style.css"));
+    provider.load_from_data(include_str!("style.css"));
     if let Some(display) = gdk::Display::default() {
         gtk4::style_context_add_provider_for_display(
             &display,
@@ -99,9 +104,7 @@ fn main() -> glib::ExitCode {
                     bar_for_keys.set_state(bar::BarState::Collapsed);
                     glib::Propagation::Stop
                 }
-                gdk::Key::Return | gdk::Key::KP_Enter => {
-                    glib::Propagation::Proceed
-                }
+                gdk::Key::Return | gdk::Key::KP_Enter => glib::Propagation::Proceed,
                 _ => glib::Propagation::Proceed,
             }
         });
@@ -170,16 +173,15 @@ fn setup_layer_shell(window: &gtk4::Window) {
 fn setup_macos_window(window: &gtk4::Window) {
     if let Some(display) = gdk::Display::default() {
         let monitors = display.monitors();
-        if monitors.n_items() > 0 {
-            if let Some(obj) = monitors.item(0) {
-                if let Some(_monitor) = obj.downcast::<gdk::Monitor>().ok() {
-                    window.set_default_size(640, 56);
-                    window.set_decorated(false);
-                    window.set_resizable(false);
-                    window.present();
-                    tracing::info!("Window positioned at bottom-center (macOS dev)");
-                }
-            }
+        if monitors.n_items() > 0
+            && let Some(obj) = monitors.item(0)
+            && let Ok(_monitor) = obj.downcast::<gdk::Monitor>()
+        {
+            window.set_default_size(640, 56);
+            window.set_decorated(false);
+            window.set_resizable(false);
+            window.present();
+            tracing::info!("Window positioned at bottom-center (macOS dev)");
         }
     }
 }

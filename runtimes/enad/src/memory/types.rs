@@ -1,5 +1,4 @@
 /// Memory entry types and schemas.
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -101,10 +100,7 @@ impl MemoryQuery {
 
     pub fn recent_context() -> Self {
         Self {
-            entry_types: vec![
-                MemoryType::ContextSnapshot,
-                MemoryType::WorkspaceSnapshot,
-            ],
+            entry_types: vec![MemoryType::ContextSnapshot, MemoryType::WorkspaceSnapshot],
             limit: 5,
             ..Default::default()
         }

@@ -26,7 +26,11 @@ impl SnapshotCapture {
         memory: Arc<MemoryStore>,
         orchestration: Arc<OrchestrationEngine>,
     ) -> Self {
-        Self { store, memory, orchestration }
+        Self {
+            store,
+            memory,
+            orchestration,
+        }
     }
 
     /// Start the background auto-snapshot loop (every 10 minutes) and
@@ -54,23 +58,30 @@ impl SnapshotCapture {
                     let prev = auto_ck.lock().unwrap();
                     *prev != ck
                 };
-                if !changed { continue; }
+                if !changed {
+                    continue;
+                }
 
                 *auto_ck.lock().unwrap() = ck;
                 if let Err(e) = auto_store.insert(&snapshot) {
                     warn!("Auto-snapshot insert failed: {e}");
                 } else {
-                        info!("Auto-snapshot saved: {} ({} apps, {} terminals)",
-                            snapshot.label, snapshot.applications.len(), snapshot.terminals.len());
-                        let label = snapshot.label.clone();
-                        let node_count = snapshot.node_count();
-                        auto_bus.publish(SystemEvent::new(
-                            "snapshot", EventKind::System,
-                            EventPayload::SnapshotTaken {
-                                snapshot_id: snapshot.snapshot_id,
-                                label,
-                                node_count,
-                            },
+                    info!(
+                        "Auto-snapshot saved: {} ({} apps, {} terminals)",
+                        snapshot.label,
+                        snapshot.applications.len(),
+                        snapshot.terminals.len()
+                    );
+                    let label = snapshot.label.clone();
+                    let node_count = snapshot.node_count();
+                    auto_bus.publish(SystemEvent::new(
+                        "snapshot",
+                        EventKind::System,
+                        EventPayload::SnapshotTaken {
+                            snapshot_id: snapshot.snapshot_id,
+                            label,
+                            node_count,
+                        },
                     ));
                 }
 
@@ -81,15 +92,14 @@ impl SnapshotCapture {
         // ── Event-driven snapshots ──
         loop {
             match rx.recv().await {
-                Ok(event) => {
-                    match &event.payload {
-                        EventPayload::SystemSleep | EventPayload::SystemWake => {
-                            let snapshot = gather_snapshot(&self.memory, &self.orchestration, true).await;
-                            let _ = self.store.insert(&snapshot);
-                        }
-                        _ => {}
+                Ok(event) => match &event.payload {
+                    EventPayload::SystemSleep | EventPayload::SystemWake => {
+                        let snapshot =
+                            gather_snapshot(&self.memory, &self.orchestration, true).await;
+                        let _ = self.store.insert(&snapshot);
                     }
-                }
+                    _ => {}
+                },
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!("Snapshot capture: lagged by {n} events");
                 }
@@ -139,15 +149,24 @@ pub async fn gather_snapshot(
         for entry in &entries {
             match entry.entry_type {
                 crate::memory::types::MemoryType::Event => {
-                    if let Some(app) = entry.details.get("app").and_then(|v| v.as_str()) {
-                        if !snapshot.applications.iter().any(|a| a.name == app) {
-                            snapshot.applications.push(AppInfo {
-                                name: app.to_string(),
-                                title: entry.details.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                pid: entry.details.get("pid").and_then(|v| v.as_u64()).map(|v| v as u32),
-                                is_focused: false,
-                            });
-                        }
+                    if let Some(app) = entry.details.get("app").and_then(|v| v.as_str())
+                        && !snapshot.applications.iter().any(|a| a.name == app)
+                    {
+                        snapshot.applications.push(AppInfo {
+                            name: app.to_string(),
+                            title: entry
+                                .details
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            pid: entry
+                                .details
+                                .get("pid")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32),
+                            is_focused: false,
+                        });
                     }
                 }
                 crate::memory::types::MemoryType::Action => {
@@ -160,7 +179,11 @@ pub async fn gather_snapshot(
                     });
                 }
                 crate::memory::types::MemoryType::Intent => {
-                    let query = entry.details.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                    let query = entry
+                        .details
+                        .get("query")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     snapshot.ai_conversations.push(ConversationRef {
                         query: query.to_string(),
                         response_summary: entry.summary.clone(),
@@ -168,7 +191,11 @@ pub async fn gather_snapshot(
                     });
                 }
                 crate::memory::types::MemoryType::AiResponse => {
-                    let query = entry.details.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                    let query = entry
+                        .details
+                        .get("query")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if !snapshot.ai_conversations.iter().any(|c| c.query == query) {
                         snapshot.ai_conversations.push(ConversationRef {
                             query: query.to_string(),
@@ -255,20 +282,27 @@ fn detect_active_project(snapshot: &WorkspaceSnapshot) -> Option<String> {
                 }
             }
             let lower = app.name.to_lowercase();
-            if lower.contains("terminal") || lower.contains("kitty") || lower.contains("alacritty") {
-                if !title.is_empty() && !title.contains("~") {
-                    return Some(title.trim().to_string());
-                }
+            if (lower.contains("terminal")
+                || lower.contains("kitty")
+                || lower.contains("alacritty"))
+                && !title.is_empty()
+                && !title.contains("~")
+            {
+                return Some(title.trim().to_string());
             }
         }
     }
     for app in &snapshot.applications {
         let lower = app.name.to_lowercase();
-        if lower.contains("code") || lower.contains("idea") || lower.contains("vim") || lower.contains("neovim") {
-            if !app.title.is_empty() && app.title != app.name {
-                let parts: Vec<&str> = app.title.split(" — ").collect();
-                return Some(parts[0].trim().to_string());
-            }
+        if (lower.contains("code")
+            || lower.contains("idea")
+            || lower.contains("vim")
+            || lower.contains("neovim"))
+            && !app.title.is_empty()
+            && app.title != app.name
+        {
+            let parts: Vec<&str> = app.title.split(" — ").collect();
+            return Some(parts[0].trim().to_string());
         }
     }
     None

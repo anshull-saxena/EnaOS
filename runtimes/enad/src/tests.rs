@@ -3,25 +3,24 @@
 /// Uses tokio's async UnixStream (matching the server) to avoid
 /// the EAGAIN/EWOULDBLOCK issue that occurs when mixing
 /// std::os::unix::net with tokio's async I/O on macOS.
-
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use uuid::Uuid;
-use serde_json::Value;
 
+use crate::actions::executor::ActionExecutor;
 use crate::bus::EventBus;
+use crate::context::ContextEngine;
 use crate::first_run::FirstRunManager;
 use crate::memory::store::MemoryStore;
+use crate::orchestration::engine::OrchestrationEngine;
+use crate::server::IpcServer;
 use crate::snapshot::store::SnapshotStore;
 use crate::suggestion::engine::SuggestionEngine;
 use crate::suggestion::store::SuggestionStore;
-use crate::context::ContextEngine;
-use crate::actions::executor::ActionExecutor;
-use crate::orchestration::engine::OrchestrationEngine;
-use crate::server::IpcServer;
 
 /// Path for a temporary Unix socket used by tests.
 fn test_socket_path(test_name: &str) -> String {
@@ -37,13 +36,22 @@ async fn send_command_raw(socket_path: &str, json: &Value) -> Result<Value, Stri
     let (mut reader, mut writer) = stream.into_split();
 
     let msg = serde_json::to_string(json).map_err(|e| format!("serialize: {e}"))?;
-    writer.write_all(msg.as_bytes()).await.map_err(|e| format!("write: {e}"))?;
-    writer.write_all(b"\n").await.map_err(|e| format!("write nl: {e}"))?;
+    writer
+        .write_all(msg.as_bytes())
+        .await
+        .map_err(|e| format!("write: {e}"))?;
+    writer
+        .write_all(b"\n")
+        .await
+        .map_err(|e| format!("write nl: {e}"))?;
     writer.flush().await.map_err(|e| format!("flush: {e}"))?;
 
     let mut line = String::new();
     let mut buf_reader = BufReader::new(&mut reader);
-    buf_reader.read_line(&mut line).await.map_err(|e| format!("read: {e}"))?;
+    buf_reader
+        .read_line(&mut line)
+        .await
+        .map_err(|e| format!("read: {e}"))?;
 
     if line.is_empty() {
         return Err("EOF — server closed connection".into());
@@ -90,22 +98,20 @@ fn setup_test_server(test_name: &str) -> (String, IpcServer) {
     let _ = std::fs::create_dir_all(&data_dir);
 
     let db_path = data_dir.join("test.db");
-    let snapshot_store = Arc::new(
-        SnapshotStore::open(db_path.to_str().unwrap()).expect("open snapshot store"),
-    );
-    let memory_store = Arc::new(
-        MemoryStore::open(db_path.to_str().unwrap()).expect("open memory store"),
-    );
+    let snapshot_store =
+        Arc::new(SnapshotStore::open(db_path.to_str().unwrap()).expect("open snapshot store"));
+    let memory_store =
+        Arc::new(MemoryStore::open(db_path.to_str().unwrap()).expect("open memory store"));
     let suggestion_store = Arc::new(
         SuggestionStore::open(data_dir.join("suggestions.db").to_str().unwrap())
             .expect("open suggestion store"),
     );
     let action_executor = Arc::new(ActionExecutor::new(bus.clone()));
-    let orchestration = Arc::new(OrchestrationEngine::new(bus.clone(), action_executor.clone()));
-    let suggestion_engine = Arc::new(SuggestionEngine::new(
-        suggestion_store.clone(),
+    let orchestration = Arc::new(OrchestrationEngine::new(
         bus.clone(),
+        action_executor.clone(),
     ));
+    let suggestion_engine = Arc::new(SuggestionEngine::new(suggestion_store.clone(), bus.clone()));
     let context_engine = Arc::new(ContextEngine::new());
     let first_run_manager = Arc::new(FirstRunManager::new(
         data_dir.to_str().unwrap(),
@@ -143,7 +149,9 @@ async fn test_ping_pong() {
         "id": Uuid::new_v4(),
         "kind": { "type": "Ping", "body": null }
     });
-    let response = send_command_raw(&socket, &ping).await.expect("ping request");
+    let response = send_command_raw(&socket, &ping)
+        .await
+        .expect("ping request");
 
     let kind = response.get("kind").expect("response has kind");
     assert_eq!(kind.get("type").unwrap(), "Response");
@@ -167,7 +175,9 @@ async fn test_first_run_status() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let cmd = unit_command("GetFirstRunStatus");
-    let response = send_command_raw(&socket, &cmd).await.expect("get first-run status");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get first-run status");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
@@ -193,7 +203,9 @@ async fn test_complete_onboarding() {
 
     // Verify fresh install state first.
     let cmd = unit_command("GetFirstRunStatus");
-    let response = send_command_raw(&socket, &cmd).await.expect("get first-run status");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get first-run status");
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
     let data = body.get("Data").unwrap();
@@ -202,14 +214,18 @@ async fn test_complete_onboarding() {
 
     // Complete onboarding.
     let cmd = unit_command("CompleteOnboarding");
-    let response = send_command_raw(&socket, &cmd).await.expect("complete onboarding");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("complete onboarding");
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
     assert!(body.get("Ok").is_some(), "Expected Response::Ok");
 
     // Verify onboarding is now marked completed.
     let cmd = unit_command("GetFirstRunStatus");
-    let response = send_command_raw(&socket, &cmd).await.expect("get first-run status");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get first-run status");
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
     let data = body.get("Data").unwrap();
@@ -236,18 +252,27 @@ async fn test_get_context_commands() {
             "limit": 6
         }),
     );
-    let response = send_command_raw(&socket, &cmd).await.expect("get context commands");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get context commands");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
     let data = body.get("Data").expect("Response::Data variant");
     let payload = data.get("payload").unwrap();
 
-    assert!(payload.get("commands").is_some(), "must have 'commands' array");
-    assert!(payload.get("context").is_some(), "must have 'context' snapshot");
+    assert!(
+        payload.get("commands").is_some(),
+        "must have 'commands' array"
+    );
+    assert!(
+        payload.get("context").is_some(),
+        "must have 'context' snapshot"
+    );
 
     let commands = payload.get("commands").unwrap().as_array().unwrap();
-    let labels: Vec<&str> = commands.iter()
+    let labels: Vec<&str> = commands
+        .iter()
         .filter_map(|c| c.get("label").and_then(|v| v.as_str()))
         .collect();
     assert!(
@@ -269,7 +294,9 @@ async fn test_get_demo_data() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let cmd = unit_command("GetDemoData");
-    let response = send_command_raw(&socket, &cmd).await.expect("get demo data");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get demo data");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
@@ -278,7 +305,10 @@ async fn test_get_demo_data() {
 
     assert_eq!(payload.get("demo").unwrap(), true);
     assert!(payload.get("snapshot").is_some(), "must have demo snapshot");
-    assert!(payload.get("orchestration_plan").is_some(), "must have demo plan");
+    assert!(
+        payload.get("orchestration_plan").is_some(),
+        "must have demo plan"
+    );
 
     server_task.abort();
     let _ = std::fs::remove_file(&socket);
@@ -293,11 +323,10 @@ async fn test_list_snapshots_empty() {
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let cmd = struct_command(
-        "ListSnapshots",
-        serde_json::json!({ "limit": 10 }),
-    );
-    let response = send_command_raw(&socket, &cmd).await.expect("list snapshots");
+    let cmd = struct_command("ListSnapshots", serde_json::json!({ "limit": 10 }));
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("list snapshots");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
@@ -327,7 +356,9 @@ async fn test_dismiss_nonexistent_suggestion() {
             "permanent": false
         }),
     );
-    let response = send_command_raw(&socket, &cmd).await.expect("dismiss suggestion");
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("dismiss suggestion");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
@@ -346,11 +377,10 @@ async fn test_get_suggestions() {
     });
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let cmd = struct_command(
-        "GetSuggestions",
-        serde_json::json!({ "limit": 10 }),
-    );
-    let response = send_command_raw(&socket, &cmd).await.expect("get suggestions");
+    let cmd = struct_command("GetSuggestions", serde_json::json!({ "limit": 10 }));
+    let response = send_command_raw(&socket, &cmd)
+        .await
+        .expect("get suggestions");
 
     let kind = response.get("kind").unwrap();
     let body = kind.get("body").unwrap();
@@ -376,12 +406,18 @@ async fn test_malformed_json() {
     let stream = UnixStream::connect(&socket).await.expect("connect");
     let (mut reader, mut writer) = stream.into_split();
 
-    writer.write_all(b"NOT JSON\n").await.expect("write garbage");
+    writer
+        .write_all(b"NOT JSON\n")
+        .await
+        .expect("write garbage");
     writer.flush().await.expect("flush");
 
     let mut line = String::new();
     let mut buf_reader = BufReader::new(&mut reader);
-    buf_reader.read_line(&mut line).await.expect("read response");
+    buf_reader
+        .read_line(&mut line)
+        .await
+        .expect("read response");
 
     let response: Value = serde_json::from_str(&line).expect("parse response");
     let kind = response.get("kind").unwrap();
@@ -399,13 +435,11 @@ async fn test_server_unavailable() {
     let result = send_command_raw(
         "/tmp/nonexistent-test-socket.sock",
         &unit_command("GetFirstRunStatus"),
-    ).await;
+    )
+    .await;
     match result {
         Err(e) => {
-            assert!(
-                e.contains("connect"),
-                "Expected connection error, got: {e}"
-            );
+            assert!(e.contains("connect"), "Expected connection error, got: {e}");
         }
         Ok(_) => panic!("Expected error for unavailable server"),
     }

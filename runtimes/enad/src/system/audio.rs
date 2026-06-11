@@ -11,7 +11,6 @@
 /// For PipeWire, pactl still works via pipewire-pulse compatibility.
 ///
 /// Future: direct libpulse-binding or PipeWire D-Bus integration.
-
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -128,11 +127,7 @@ pub async fn run_mpris(bus: Arc<EventBus>) {
                         EventPayload::MediaPlayback {
                             player: player_name.clone(),
                             state,
-                            title: if title.is_empty() {
-                                None
-                            } else {
-                                Some(title)
-                            },
+                            title: if title.is_empty() { None } else { Some(title) },
                             artist: if artist.is_empty() {
                                 None
                             } else {
@@ -232,7 +227,9 @@ fn parse_sink_info(output: &str, sink_name: &str) -> Result<(String, f64, bool),
             }
 
             // End of sink section.
-            if line.starts_with("Sink #") || (line.starts_with('\t') == false && line.contains("Name:")) {
+            if line.starts_with("Sink #")
+                || (line.starts_with('\t') == false && line.contains("Name:"))
+            {
                 break;
             }
         }
@@ -263,7 +260,11 @@ async fn get_mpris_players(conn: &zbus::Connection) -> Vec<String> {
     names
         .iter()
         .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
-        .map(|n| n.strip_prefix("org.mpris.MediaPlayer2.").unwrap_or(n).to_string())
+        .map(|n| {
+            n.strip_prefix("org.mpris.MediaPlayer2.")
+                .unwrap_or(n)
+                .to_string()
+        })
         .collect()
 }
 
@@ -325,15 +326,13 @@ async fn get_mpris_state(
         .get("xesam:artist")
         .and_then(|v| {
             if let Value::Array(arr) = v {
-                arr.iter()
-                    .next()
-                    .and_then(|v| {
-                        if let Value::Str(s) = v {
-                            Some(s.as_str().to_string())
-                        } else {
-                            None
-                        }
-                    })
+                arr.iter().next().and_then(|v| {
+                    if let Value::Str(s) = v {
+                        Some(s.as_str().to_string())
+                    } else {
+                        None
+                    }
+                })
             } else if let Value::Str(s) = v {
                 Some(s.as_str().to_string())
             } else {

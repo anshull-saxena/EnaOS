@@ -9,7 +9,6 @@
 ///
 /// Deep state (memory entries, plans, snapshots) is refreshed
 /// periodically by an external task via refresh_from_stores().
-
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -107,25 +106,19 @@ impl ContextAggregator {
                 }
                 _ => {}
             },
-            "Audio" => match event_type {
-                "MediaPlayback" => {
-                    if let Some(player) = data.get("player").and_then(|v| v.as_str()) {
-                        ctx.desktop.media_player = player.to_string();
-                    }
-                    if let Some(title) = data.get("title").and_then(|v| v.as_str()) {
-                        ctx.desktop.media_title = title.to_string();
-                    }
+            "Audio" if event_type == "MediaPlayback" => {
+                if let Some(player) = data.get("player").and_then(|v| v.as_str()) {
+                    ctx.desktop.media_player = player.to_string();
                 }
-                _ => {}
-            },
-            "Clipboard" => match event_type {
-                "ClipboardUpdated" => {
-                    if let Some(preview) = data.get("preview").and_then(|v| v.as_str()) {
-                        ctx.desktop.clipboard_preview = preview.to_string();
-                    }
+                if let Some(title) = data.get("title").and_then(|v| v.as_str()) {
+                    ctx.desktop.media_title = title.to_string();
                 }
-                _ => {}
-            },
+            }
+            "Clipboard" if event_type == "ClipboardUpdated" => {
+                if let Some(preview) = data.get("preview").and_then(|v| v.as_str()) {
+                    ctx.desktop.clipboard_preview = preview.to_string();
+                }
+            }
             _ => {}
         }
     }

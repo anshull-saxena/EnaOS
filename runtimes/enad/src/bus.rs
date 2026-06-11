@@ -47,12 +47,10 @@ impl EventBus {
     /// Subscribe to a specific event kind.
     pub fn subscribe(&self, kind: EventKind) -> broadcast::Receiver<SystemEvent> {
         let mut guard = self.kind_tx.lock().unwrap();
-        let tx = guard
-            .entry(kind)
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(self.capacity);
-                tx
-            });
+        let tx = guard.entry(kind).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(self.capacity);
+            tx
+        });
         tx.subscribe()
     }
 

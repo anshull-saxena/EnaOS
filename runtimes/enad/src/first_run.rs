@@ -8,7 +8,6 @@
 /// - If no marker and no snapshot DB → fresh install
 /// - Seeds demo snapshot + example orchestration plan for demo purposes
 /// - Demo data auto-expires after first real snapshot is taken
-
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -178,8 +177,8 @@ pub struct DemoPlanNode {
 
 /// Demo orchestration plan for fresh installs.
 pub fn create_demo_orchestration_plan() -> (Uuid, Vec<DemoPlanNode>) {
-    let plan_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002")
-        .unwrap_or_else(|_| Uuid::new_v4());
+    let plan_id =
+        Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap_or_else(|_| Uuid::new_v4());
     let nodes = vec![
         DemoPlanNode {
             id: "node-1".to_string(),

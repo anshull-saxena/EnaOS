@@ -12,5 +12,3 @@ pub struct Args {
     #[arg(short, long)]
     pub verbose: bool,
 }
-
-

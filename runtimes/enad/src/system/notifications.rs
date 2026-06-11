@@ -12,7 +12,6 @@
 /// Note: This does NOT replace the system notification daemon (e.g.,
 /// mako, dunst). It runs as a secondary listener that observes notifications
 /// via D-Bus signal monitoring.
-
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -86,16 +85,13 @@ pub async fn run(bus: Arc<EventBus>) {
     info!("Notification watcher: monitoring D-Bus signals");
 
     // Monitor NotificationClosed signals.
-    let mut closed_rx = match conn
-        .subscribe()
-        .await
-        .map(|mut r| {
-            r.add_match(
-                "type='signal',interface='org.freedesktop.Notifications',member='NotificationClosed'",
-            )
-            .expect("valid match rule");
-            r
-        }) {
+    let mut closed_rx = match conn.subscribe().await.map(|mut r| {
+        r.add_match(
+            "type='signal',interface='org.freedesktop.Notifications',member='NotificationClosed'",
+        )
+        .expect("valid match rule");
+        r
+    }) {
         Ok(r) => r,
         Err(e) => {
             warn!("Notification watcher: failed to subscribe to signals: {e}");

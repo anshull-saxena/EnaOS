@@ -46,7 +46,9 @@ impl WorkspaceSnapshot {
     /// Number of actionable items in this snapshot (for restoration planning).
     pub fn node_count(&self) -> u32 {
         let mut count = 0u32;
-        if !self.workspaces.is_empty() { count += 1; }
+        if !self.workspaces.is_empty() {
+            count += 1;
+        }
         count += self.applications.len() as u32;
         count += self.terminals.len() as u32;
         count

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Duration, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use tracing::info;
 use uuid::Uuid;
 
@@ -21,7 +21,9 @@ impl SuggestionStore {
         }
         let conn = Connection::open(path)
             .map_err(|e| format!("Failed to open suggestion database: {e}"))?;
-        let store = Self { conn: Mutex::new(conn) };
+        let store = Self {
+            conn: Mutex::new(conn),
+        };
         store.init_schema()?;
         info!("Suggestion store opened at {path}");
         Ok(store)

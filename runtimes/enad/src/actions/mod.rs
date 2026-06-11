@@ -1,3 +1,5 @@
+pub mod executor;
+pub mod handlers;
 /// Desktop action execution subsystem.
 ///
 /// All AI-driven desktop actions flow through this module.
@@ -12,7 +14,4 @@
 ///   - reports failures
 ///   - streams execution status
 ///   - respects permission boundaries
-
 pub mod types;
-pub mod executor;
-pub mod handlers;

@@ -8,7 +8,6 @@
 ///   - Fall back to polling `xclip -selection clipboard -o` on X11
 ///
 /// Privacy: only the first 80 chars of text content are included in the event.
-
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -104,9 +103,7 @@ async fn get_clipboard_wl_paste() -> Result<String, ()> {
         .map_err(|_| ())?;
 
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(())
     }
@@ -153,9 +150,7 @@ async fn get_clipboard_xclip() -> Result<String, ()> {
         .map_err(|_| ())?;
 
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(())
     }

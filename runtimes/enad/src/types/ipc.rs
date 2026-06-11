@@ -34,78 +34,51 @@ pub enum MessageKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     /// Execute a system-level command
-    Execute {
-        command: String,
-        args: Vec<String>,
-    },
+    Execute { command: String, args: Vec<String> },
     /// Execute a desktop action (open app, focus window, etc.)
     ExecuteAction {
         action: String,
         params: serde_json::Value,
     },
     /// Cancel a running action.
-    CancelAction {
-        action_id: Uuid,
-    },
+    CancelAction { action_id: Uuid },
     /// Spawn an agent with a task description
     SpawnAgent {
         task: String,
         capabilities: Vec<String>,
     },
     /// Query current system state
-    QueryState {
-        target: StateTarget,
-    },
+    QueryState { target: StateTarget },
     /// Terminate a running process/agent
-    Terminate {
-        id: Uuid,
-    },
+    Terminate { id: Uuid },
     /// Get system context for AI prompts
     GetContext,
 
     // ── Orchestration commands ──
     /// Submit an execution plan.
-    SubmitPlan {
-        plan: serde_json::Value,
-    },
+    SubmitPlan { plan: serde_json::Value },
     /// Approve a pending plan.
-    ApprovePlan {
-        plan_id: Uuid,
-    },
+    ApprovePlan { plan_id: Uuid },
     /// Reject a pending plan.
-    RejectPlan {
-        plan_id: Uuid,
-    },
+    RejectPlan { plan_id: Uuid },
     /// Cancel a running plan.
-    CancelPlan {
-        plan_id: Uuid,
-    },
+    CancelPlan { plan_id: Uuid },
     /// List all plans.
     ListPlans,
 
     // ── Workspace Snapshot commands ──
     /// Take a workspace snapshot.
-    TakeSnapshot {
-        label: Option<String>,
-    },
+    TakeSnapshot { label: Option<String> },
     /// List recent snapshots.
-    ListSnapshots {
-        limit: Option<u32>,
-    },
+    ListSnapshots { limit: Option<u32> },
     /// Get a full snapshot by ID.
-    GetSnapshot {
-        snapshot_id: Uuid,
-    },
+    GetSnapshot { snapshot_id: Uuid },
     /// Delete a snapshot.
-    DeleteSnapshot {
-        snapshot_id: Uuid,
-    },
+    DeleteSnapshot { snapshot_id: Uuid },
 
     // ── Restoration commands ──
     /// Preview what a snapshot restoration would do.
-    PreviewRestore {
-        snapshot_id: Uuid,
-    },
+    PreviewRestore { snapshot_id: Uuid },
     /// Restore a workspace snapshot as an orchestration plan.
     RestoreSnapshot {
         snapshot_id: Uuid,
@@ -114,9 +87,7 @@ pub enum Command {
 
     // ── Ambient suggestion commands ──
     /// Get active suggestions.
-    GetSuggestions {
-        limit: Option<u32>,
-    },
+    GetSuggestions { limit: Option<u32> },
     /// Dismiss a suggestion.
     DismissSuggestion {
         suggestion_id: Uuid,
@@ -125,10 +96,7 @@ pub enum Command {
 
     // ── Contextual Command Intelligence ──
     /// Get context-aware command suggestions.
-    GetContextCommands {
-        query: String,
-        limit: Option<u32>,
-    },
+    GetContextCommands { query: String, limit: Option<u32> },
 
     // ── First-Run / Onboarding commands ──
     /// Get first-run status (fresh install, onboarding completed, etc.).
@@ -153,25 +121,20 @@ pub enum StateTarget {
     /// Memory summary.
     MemorySummary,
     /// Memory search.
-    MemorySearch { query: String },
+    MemorySearch {
+        query: String,
+    },
 }
 
 /// Responses from enad back to the Ena Bar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     /// Command executed successfully
-    Ok {
-        message: Option<String>,
-    },
+    Ok { message: Option<String> },
     /// Data payload returned
-    Data {
-        payload: serde_json::Value,
-    },
+    Data { payload: serde_json::Value },
     /// Something went wrong
-    Error {
-        code: String,
-        message: String,
-    },
+    Error { code: String, message: String },
 }
 
 /// Event subscription request.
@@ -258,15 +221,15 @@ mod tests {
             target: StateTarget::ActiveWindows,
         });
         roundtrip_command(Command::QueryState {
-            target: StateTarget::MemorySearch { query: "foo".into() },
+            target: StateTarget::MemorySearch {
+                query: "foo".into(),
+            },
         });
     }
 
     #[test]
     fn test_cmd_terminate() {
-        roundtrip_command(Command::Terminate {
-            id: Uuid::new_v4(),
-        });
+        roundtrip_command(Command::Terminate { id: Uuid::new_v4() });
     }
 
     #[test]
@@ -619,7 +582,7 @@ mod tests {
     #[test]
     fn test_deserialize_wrong_type_tag_fails() {
         let result = serde_json::from_str::<IpcMessage>(
-            r##"{"id": "00000000-0000-0000-0000-000000000000", "kind": {"type": "Unknown", "body": null}}"##
+            r##"{"id": "00000000-0000-0000-0000-000000000000", "kind": {"type": "Unknown", "body": null}}"##,
         );
         assert!(result.is_err());
     }
@@ -628,11 +591,17 @@ mod tests {
     fn test_serialize_contains_kind_field() {
         let msg = IpcMessage::command(Command::GetContext);
         let json = serde_json::to_value(&msg).unwrap();
-        assert!(json.get("kind").is_some(), "JSON must have top-level 'kind' field");
+        assert!(
+            json.get("kind").is_some(),
+            "JSON must have top-level 'kind' field"
+        );
         assert!(json.get("id").is_some(), "JSON must have 'id' field");
         // The inner kind must have "type" and "body" (adjacent tagging)
         let kind = json.get("kind").unwrap();
-        assert!(kind.get("type").is_some(), "kind must have nested 'type' field");
+        assert!(
+            kind.get("type").is_some(),
+            "kind must have nested 'type' field"
+        );
     }
 
     #[test]
@@ -641,8 +610,14 @@ mod tests {
         let msg = IpcMessage::command(Command::GetContext);
         let json = serde_json::to_value(&msg).unwrap();
         // The top-level JSON should NOT have "type" or "body" directly.
-        assert!(json.get("type").is_none(), "'type' must NOT be at top level (no flatten)");
-        assert!(json.get("body").is_none(), "'body' must NOT be at top level (no flatten)");
+        assert!(
+            json.get("type").is_none(),
+            "'type' must NOT be at top level (no flatten)"
+        );
+        assert!(
+            json.get("body").is_none(),
+            "'body' must NOT be at top level (no flatten)"
+        );
         // Instead, "kind" should be a nested object containing "type" and "body".
         let kind = json.get("kind").unwrap();
         assert!(kind.is_object(), "'kind' must be a nested object");

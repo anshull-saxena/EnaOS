@@ -7,7 +7,6 @@
 ///   4. KDE — via D-Bus (org.kde.KWin)
 ///
 /// Publishes WorkspaceChanged events when the active workspace changes.
-
 use std::sync::Arc;
 
 use tracing::{info, warn};
@@ -123,8 +122,8 @@ async fn get_active_workspace_hyprland() -> Result<String, ()> {
     let instance = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| ())?;
     let socket = format!("/tmp/hypr/{instance}/.socket2.sock");
 
-    use std::os::unix::net::UnixStream;
     use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
     let mut stream = UnixStream::connect(&socket).map_err(|_| ())?;
     stream.write_all(b"j/workspaces").map_err(|_| ())?;
