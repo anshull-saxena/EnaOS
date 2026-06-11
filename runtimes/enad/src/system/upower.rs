@@ -18,6 +18,7 @@
 ///   TimeToFull (int64, seconds)
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use tracing::{info, warn};
 use zbus::{Connection, proxy};
 
@@ -100,10 +101,10 @@ pub async fn run(bus: Arc<EventBus>) {
     emit_state(&bus, &device).await;
 
     // Subscribe to property changes.
-    let mut receiver = device.receive_percentage_changed();
+    let mut receiver = device.receive_percentage_changed().await;
 
     // We also want to watch state changes.
-    let mut state_receiver = device.receive_state_changed();
+    let mut state_receiver = device.receive_state_changed().await;
 
     // Listen for either percentage or state changes.
     loop {

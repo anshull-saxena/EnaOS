@@ -85,29 +85,19 @@ pub async fn run(bus: Arc<EventBus>) {
     info!("Notification watcher: monitoring D-Bus signals");
 
     // Monitor NotificationClosed signals and Notify method calls.
-    if let Err(e) = conn
-        .add_match_rule(
-            "type='signal',interface='org.freedesktop.Notifications',member='NotificationClosed'",
-        )
-        .await
-    {
-        warn!("Notification watcher: failed to add closed match rule: {e}");
-        return;
-    }
-    if let Err(e) = conn
-        .add_match_rule(
-            "type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
-        )
-        .await
-    {
-        warn!("Notification watcher: failed to add notify match rule: {e}");
-        return;
-    }
+    // We listen to the whole org.freedesktop.Notifications interface.
+    let rule = "interface='org.freedesktop.Notifications'";
 
     use futures_util::StreamExt;
     use zbus::MessageStream;
 
-    let mut stream = MessageStream::from(&conn);
+    let mut stream = match MessageStream::for_match_rule(rule, &conn, None).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Notification watcher: failed to subscribe to notifications: {e}");
+            return;
+        }
+    };
 
     loop {
         tokio::select! {

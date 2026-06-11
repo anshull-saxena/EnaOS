@@ -16,6 +16,7 @@
 ///   70 = connected-global
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use tracing::{info, warn};
 use zbus::{Connection, proxy};
 
@@ -116,9 +117,9 @@ pub async fn run(bus: Arc<EventBus>) {
     emit_state(&bus, &conn, &nm).await;
 
     // Subscribe to state changes.
-    let mut state_rx = nm.receive_state_changed();
+    let mut state_rx = nm.receive_state_changed().await;
 
-    let mut active_rx = nm.receive_active_connections_changed();
+    let mut active_rx = nm.receive_active_connections_changed().await;
 
     loop {
         tokio::select! {

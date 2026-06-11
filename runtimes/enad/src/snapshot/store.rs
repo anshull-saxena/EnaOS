@@ -128,7 +128,7 @@ impl SnapshotStore {
             )
             .map_err(|e| format!("Prepare failed: {e}"))?;
 
-        let result = stmt.query_row(params![snapshot_id.to_string()], |row| parse_snapshot(row));
+        let result = stmt.query_row(params![snapshot_id.to_string()], parse_snapshot);
 
         match result {
             Ok(snapshot) => Ok(Some(snapshot)),
