@@ -84,58 +84,59 @@ pub async fn run(bus: Arc<EventBus>) {
 
     info!("Notification watcher: monitoring D-Bus signals");
 
-    // Monitor NotificationClosed signals.
-    let mut closed_rx = match conn.subscribe().await.map(|mut r| {
-        r.add_match(
+    // Monitor NotificationClosed signals and Notify method calls.
+    if let Err(e) = conn
+        .add_match_rule(
             "type='signal',interface='org.freedesktop.Notifications',member='NotificationClosed'",
         )
-        .expect("valid match rule");
-        r
-    }) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("Notification watcher: failed to subscribe to signals: {e}");
-            return;
-        }
-    };
+        .await
+    {
+        warn!("Notification watcher: failed to add closed match rule: {e}");
+        return;
+    }
+    if let Err(e) = conn
+        .add_match_rule(
+            "type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
+        )
+        .await
+    {
+        warn!("Notification watcher: failed to add notify match rule: {e}");
+        return;
+    }
 
-    // We also need to monitor Notify calls.
-    // Since we're not the notification server, we can't intercept Notify calls directly.
-    // Instead, we monitor the D-Bus traffic for Notify method calls.
-    let mut notify_rx = match conn.subscribe().await {
-        Ok(mut r) => {
-            r.add_match(
-                "type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
-            )
-            .expect("valid match rule");
-            r
-        }
-        Err(e) => {
-            warn!("Notification watcher: failed to subscribe to Notify calls: {e}");
-            return;
-        }
-    };
+    use futures_util::StreamExt;
+    use zbus::MessageStream;
+
+    let mut stream = MessageStream::from(&conn);
 
     loop {
         tokio::select! {
-            Some(msg) = closed_rx.next() => {
-                // NotificationClosed signal: (uint32 id, uint32 reason)
-                if let Ok(body) = msg.body::<(u32, u32)>() {
-                    info!("Notification dismissed: id={}", body.0);
-                    bus.publish(SystemEvent::new(
-                        "notification-watcher",
-                        EventKind::Notification,
-                        EventPayload::NotificationDismissed {
-                            id: body.0,
-                        },
-                    ));
+            Some(msg_res) = stream.next() => {
+                match msg_res {
+                    Ok(msg) => {
+                        let header = msg.header();
+                        let member = header.member();
+
+                        if member.map(|m| m.as_str()) == Some("NotificationClosed") {
+                            // NotificationClosed signal: (uint32 id, uint32 reason)
+                            if let Ok(body) = msg.body().deserialize::<(u32, u32)>() {
+                                info!("Notification dismissed: id={}", body.0);
+                                bus.publish(SystemEvent::new(
+                                    "notification-watcher",
+                                    EventKind::Notification,
+                                    EventPayload::NotificationDismissed {
+                                        id: body.0,
+                                    },
+                                ));
+                            }
+                        } else if member.map(|m| m.as_str()) == Some("Notify") {
+                            info!("Notification: new notification received (details require server proxy)");
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Notification watcher: error reading D-Bus message: {e}");
+                    }
                 }
-            }
-            Some(_msg) = notify_rx.next() => {
-                // We see the Notify call but can't easily extract the body
-                // without being the actual notification server.
-                // Log that a notification was sent.
-                info!("Notification: new notification received (details require server proxy)");
             }
         }
     }

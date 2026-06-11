@@ -126,7 +126,7 @@ pub async fn run_mpris(bus: Arc<EventBus>) {
                         EventKind::Audio,
                         EventPayload::MediaPlayback {
                             player: player_name.clone(),
-                            state,
+                            state: state.clone(),
                             title: if title.is_empty() { None } else { Some(title) },
                             artist: if artist.is_empty() {
                                 None
@@ -289,7 +289,8 @@ async fn get_mpris_state(
         .await
         .map_err(|_| ())?;
 
-    let state: Value = msg.body().deserialize().map_err(|_| ())?;
+    let body = msg.body();
+    let state: Value = body.deserialize().map_err(|_| ())?;
     let state_str = if let Value::Str(s) = state {
         s.as_str().to_string()
     } else {
@@ -308,8 +309,8 @@ async fn get_mpris_state(
         .await
         .map_err(|_| ())?;
 
-    let metadata: std::collections::HashMap<String, Value> =
-        msg.body().deserialize().map_err(|_| ())?;
+    let body = msg.body();
+    let metadata: std::collections::HashMap<String, Value> = body.deserialize().map_err(|_| ())?;
 
     let title = metadata
         .get("xesam:title")

@@ -100,22 +100,10 @@ pub async fn run(bus: Arc<EventBus>) {
     emit_state(&bus, &device).await;
 
     // Subscribe to property changes.
-    let mut receiver = match device.receive_percentage_changed().await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("UPower watcher: failed to subscribe to percentage changes: {e}");
-            return;
-        }
-    };
+    let mut receiver = device.receive_percentage_changed();
 
     // We also want to watch state changes.
-    let mut state_receiver = match device.receive_state_changed().await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("UPower watcher: failed to subscribe to state changes: {e}");
-            return;
-        }
-    };
+    let mut state_receiver = device.receive_state_changed();
 
     // Listen for either percentage or state changes.
     loop {
