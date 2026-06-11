@@ -160,27 +160,33 @@ async fn emit_state(
     if connected {
         if let Ok(paths) = nm.active_connections().await {
             for path in paths {
-                if let Ok(ac) = ActiveConnectionProxy::builder(conn)
-                    .path(path.clone())
-                    .await
-                {
-                    if let Ok(devices) = ac.devices().await {
-                        for dev_path in devices {
-                            if let Ok(wdev) = WirelessDeviceProxy::builder(conn)
-                                .path(dev_path.clone())
-                                .await
-                            {
-                                if let Ok(ap_path) = wdev.active_access_point().await {
-                                    if ap_path.as_str() != "/" {
-                                        if let Ok(ap) = AccessPointProxy::builder(conn)
-                                            .path(ap_path)
-                                            .await
-                                        {
-                                            if let Ok(raw_ssid) = ap.ssid().await {
-                                                ssid = Some(decode_ssid(raw_ssid));
-                                            }
-                                            if let Ok(s) = ap.strength().await {
-                                                strength = Some(s);
+                // Build ActiveConnection proxy from path.
+                if let Ok(builder) = ActiveConnectionProxy::builder(conn) {
+                    if let Ok(builder) = builder.path(path.clone()) {
+                        if let Ok(ac) = builder.build().await {
+                            if let Ok(devices) = ac.devices().await {
+                                for dev_path in devices {
+                                    // Build WirelessDevice proxy from device path.
+                                    if let Ok(builder) = WirelessDeviceProxy::builder(conn) {
+                                        if let Ok(builder) = builder.path(dev_path.clone()) {
+                                            if let Ok(wdev) = builder.build().await {
+                                                if let Ok(ap_path) = wdev.active_access_point().await {
+                                                    if ap_path.as_str() != "/" {
+                                                        // Build AccessPoint proxy from AP path.
+                                                        if let Ok(builder) = AccessPointProxy::builder(conn) {
+                                                            if let Ok(builder) = builder.path(ap_path) {
+                                                                if let Ok(ap) = builder.build().await {
+                                                                    if let Ok(raw_ssid) = ap.ssid().await {
+                                                                        ssid = Some(decode_ssid(raw_ssid));
+                                                                    }
+                                                                    if let Ok(s) = ap.strength().await {
+                                                                        strength = Some(s);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
