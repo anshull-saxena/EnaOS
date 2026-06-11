@@ -46,6 +46,6 @@ jobs:
           # The bar won't have layer-shell support in CI (can't run Wayland anyway).
           sudo apt-get install -y -qq libgtk4-layer-shell-dev 2>/dev/null || true
       - name: Build
-        run: cargo build --release --manifest-path shell/ena-bar/Cargo.toml
+        run: cargo build --release --manifest-path shell/ena-bar/Cargo.toml --no-default-features
       - name: Clippy
-        run: cargo clippy --manifest-path shell/ena-bar/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path shell/ena-bar/Cargo.toml --no-default-features -- -D warnings

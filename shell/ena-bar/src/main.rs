@@ -72,11 +72,11 @@ fn main() -> glib::ExitCode {
         window.set_resizable(false);
         window.set_default_size(640, 56);
 
-        // Layer-shell (Linux) or floating bottom-center (macOS dev)
-        #[cfg(target_os = "linux")]
+        // Layer-shell or fallback window
+        #[cfg(feature = "layer-shell")]
         setup_layer_shell(&window);
-        #[cfg(not(target_os = "linux"))]
-        setup_macos_window(&window);
+        #[cfg(not(feature = "layer-shell"))]
+        setup_fallback_window(&window);
 
         // ── Bar widget (with socket_path for IPC commands) ──────
         let ena_bar = bar::EnaBar::new(&socket_path);
@@ -150,8 +150,8 @@ fn main() -> glib::ExitCode {
     app.run()
 }
 
-/// Set up as a Wayland layer-shell overlay (Linux only).
-#[cfg(target_os = "linux")]
+/// Set up as a Wayland layer-shell overlay.
+#[cfg(feature = "layer-shell")]
 fn setup_layer_shell(window: &gtk4::Window) {
     use gtk4_layer_shell::{Edge, LayerShell};
 
@@ -168,9 +168,9 @@ fn setup_layer_shell(window: &gtk4::Window) {
     tracing::info!("Layer-shell surface initialized");
 }
 
-/// Position at bottom-center on macOS for development.
-#[cfg(not(target_os = "linux"))]
-fn setup_macos_window(window: &gtk4::Window) {
+/// Fallback window positioning for development / non-layer-shell platforms.
+#[cfg(not(feature = "layer-shell"))]
+fn setup_fallback_window(window: &gtk4::Window) {
     if let Some(display) = gdk::Display::default() {
         let monitors = display.monitors();
         if monitors.n_items() > 0
@@ -181,7 +181,7 @@ fn setup_macos_window(window: &gtk4::Window) {
             window.set_decorated(false);
             window.set_resizable(false);
             window.present();
-            tracing::info!("Window positioned at bottom-center (macOS dev)");
+            tracing::info!("Window positioned at bottom-center (development fallback)");
         }
     }
 }
