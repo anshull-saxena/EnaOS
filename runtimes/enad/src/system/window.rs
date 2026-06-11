@@ -199,8 +199,8 @@ async fn get_focused_window_xprop() -> Result<(String, String), ()> {
         .to_string();
 
     let title = String::from_utf8_lossy(&name_output.stdout)
-        .splitn(2, '=')
-        .nth(1)
+        .split_once('=')
+        .map(|x| x.1)
         .unwrap_or("")
         .trim()
         .trim_matches('"')

@@ -227,9 +227,7 @@ fn parse_sink_info(output: &str, sink_name: &str) -> Result<(String, f64, bool),
             }
 
             // End of sink section.
-            if line.starts_with("Sink #")
-                || (line.starts_with('\t') == false && line.contains("Name:"))
-            {
+            if line.starts_with("Sink #") || (!line.starts_with('\t') && line.contains("Name:")) {
                 break;
             }
         }
@@ -274,7 +272,7 @@ async fn get_mpris_state(
 ) -> Result<(String, String, String), ()> {
     use zbus::zvariant::Value;
 
-    let path = format!("/org/mpris/MediaPlayer2");
+    let path = "/org/mpris/MediaPlayer2".to_string();
     let dest = format!("org.mpris.MediaPlayer2.{player_name}");
 
     // Get PlaybackStatus and Metadata via Get method.

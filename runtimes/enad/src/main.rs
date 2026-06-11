@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::empty_line_after_doc_comments)]
+#![allow(clippy::collapsible_if)]
 
 mod actions;
 mod bus;
